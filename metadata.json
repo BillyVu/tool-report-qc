@@ -1,0 +1,6 @@
+{
+  "name": "QC Admin Dashboard",
+  "description": "Hệ thống Quản lý Mẫu Kiểm tra, Giám sát QC & Xuất Báo cáo Word (.docx)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
