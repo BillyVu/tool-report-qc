@@ -1,3 +1,6 @@
+import { PhotoType } from '../constants/photoTypes';
+
+export type { PhotoType };
 export type JobStatus = 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
 export type StepStatus = 'PASS' | 'FAIL' | 'PENDING';
 export type StepInputType = 'PHOTO' | 'TEXT' | 'PHOTO_AND_TEXT';
@@ -11,10 +14,18 @@ export interface DocxMapping {
   imageHeightMm: number;
 }
 
+export interface PhotoSlotConfig {
+  slotIndex: number;
+  label: string;
+  photoType: PhotoType;
+}
+
 export interface PhotoSlotData {
   slotIndex: number;
   label: string;
+  photoType?: PhotoType;
   photoUrl?: string;
+  aiDetectedText?: string;
 }
 
 export interface InspectionStep {
@@ -23,6 +34,7 @@ export interface InspectionStep {
   sampleSize?: string; // e.g., "120 pcs", "117 pcs"
   requiredPhotoCount?: number; // e.g., 6, 2, 4, 3, 5, 0
   photoSlots?: string[]; // e.g., ["Slot 1: Mặt trước", "Slot 2: Mặt sau", ...]
+  photoSlotConfigs?: PhotoSlotConfig[]; // Typed photo slot list
   inputType?: StepInputType; // 'PHOTO' | 'TEXT' | 'PHOTO_AND_TEXT'
   textInputLabel?: string;
   textInputPlaceholder?: string;
@@ -43,6 +55,7 @@ export interface ChecklistTemplate {
   productName: string;
   docxTemplateName: string;
   version: string;
+  createdAt?: string;
   updatedAt: string;
   steps: InspectionStep[];
 }
@@ -53,9 +66,11 @@ export interface StepResult {
   note: string;
   photoUrl?: string;
   photoSlotsData?: PhotoSlotData[];
+  photos?: { url: string; slotName: string }[];
   textValue?: string;
   aiDetectedValue?: string;
   aiDetectStatus?: 'SUCCESS' | 'WARNING' | 'FAILED';
+  aiMatchStatus?: string;
   timestamp?: string;
   editedByAdmin?: boolean;
   originalNote?: string;
@@ -70,6 +85,16 @@ export interface AuditLogEntry {
   oldValue: string;
   newValue: string;
   timestamp: string;
+}
+
+export interface SessionAccessLog {
+  id: string;
+  timestamp: string;
+  workerName: string;
+  workerId?: string;
+  deviceMac: string;
+  deviceInfo: string;
+  action: 'URL_OPENED' | 'CHECK_IN' | 'STEP_UPDATE' | 'SUBMITTED';
 }
 
 export interface InspectionJob {
@@ -90,6 +115,23 @@ export interface InspectionJob {
   adminNotes?: string;
   exportCount?: number;
   lastExportedAt?: string;
+  
+  // Session URL & Expiration (24h limit)
+  sessionToken?: string;
+  sessionCreatedAt?: string;
+  sessionExpiresAt?: string; // ISO string 24h after export
+  sessionExportCount?: number;
+
+  // Worker & Device Tracking (MAC Address & Check-in)
+  workerMac?: string;
+  sessionTracker?: {
+    workerName: string;
+    workerId?: string;
+    deviceMac: string;
+    deviceInfo: string;
+    joinedAt: string;
+  };
+  sessionAccessLogs?: SessionAccessLog[];
 }
 
 export interface DashboardKPI {

@@ -1,4 +1,4 @@
-import { ChecklistTemplate, InspectionJob, AuditLogEntry, DashboardKPI } from '../types/qc';
+import { ChecklistTemplate, InspectionJob, StepResult, AuditLogEntry, DashboardKPI } from '../types/qc';
 import { INITIAL_TEMPLATES, INITIAL_JOBS, INITIAL_AUDIT_LOGS } from './mockData';
 
 const TEMPLATES_KEY = 'qc_admin_templates_v1';
@@ -200,6 +200,190 @@ class QCService {
       job.lastExportedAt = new Date().toISOString();
       this.saveToStorage();
     }
+  }
+
+  // --- JOB SESSION EXPORT & URL MANAGEMENT (24h LIMIT) ---
+  public generateJobSessionUrl(jobId: string): { sessionUrl: string; expiresAt: string; token: string; isExpired: boolean } {
+    this.loadFromStorage();
+    const job = this.getJobById(jobId);
+    if (!job) {
+      throw new Error(`Job ${jobId} không tồn tại`);
+    }
+
+    const now = new Date();
+    const expiresAtDate = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 1 day (24 hours) from export
+    const token = `SESS-${jobId}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    job.sessionToken = token;
+    job.sessionCreatedAt = now.toISOString();
+    job.sessionExpiresAt = expiresAtDate.toISOString();
+    job.sessionExportCount = (job.sessionExportCount || 0) + 1;
+    job.exportCount = (job.exportCount || 0) + 1;
+    job.lastExportedAt = now.toISOString();
+
+    if (!job.sessionAccessLogs) job.sessionAccessLogs = [];
+    job.sessionAccessLogs.unshift({
+      id: `LOG-EXPORT-${Date.now()}`,
+      timestamp: now.toISOString().replace('T', ' ').slice(0, 19),
+      workerName: 'QC Admin System',
+      deviceMac: 'N/A (Server Export)',
+      deviceInfo: 'Admin Console',
+      action: 'URL_OPENED'
+    });
+
+    this.saveToStorage();
+
+    const baseUrl = `${window.location.origin}${window.location.pathname}`;
+    const sessionUrl = `${baseUrl}?jobSession=${jobId}&token=${token}`;
+
+    return {
+      sessionUrl,
+      expiresAt: job.sessionExpiresAt,
+      token,
+      isExpired: false
+    };
+  }
+
+  public validateJobSession(jobId: string, token: string) {
+    this.loadFromStorage();
+    const job = this.getJobById(jobId);
+    if (!job || !job.sessionExpiresAt || !job.sessionToken || job.sessionToken !== token) {
+      return { isValid: false, isExpired: false, job: undefined };
+    }
+
+    const expiresTime = new Date(job.sessionExpiresAt).getTime();
+    const nowTime = Date.now();
+
+    if (nowTime > expiresTime) {
+      return {
+        isValid: true,
+        isExpired: true,
+        job,
+        expiresAtFormatted: new Date(expiresTime).toLocaleString('vi-VN')
+      };
+    }
+
+    const diffMs = expiresTime - nowTime;
+    const hoursRemaining = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutesRemaining = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    let template = this.getTemplateById(job.templateId);
+    if (!template) {
+      template = this.templates[0] || INITIAL_TEMPLATES[0];
+    }
+
+    return {
+      isValid: true,
+      isExpired: false,
+      job,
+      template,
+      hoursRemaining,
+      minutesRemaining,
+      expiresAtFormatted: new Date(expiresTime).toLocaleString('vi-VN')
+    };
+  }
+
+  public recordWorkerSessionCheckIn(
+    jobId: string,
+    token: string,
+    workerInfo: {
+      workerName: string;
+      workerId?: string;
+      line?: string;
+      shift?: string;
+      deviceMac: string;
+      deviceInfo: string;
+    }
+  ) {
+    this.loadFromStorage();
+    const session = this.validateJobSession(jobId, token);
+    if (!session.isValid || session.isExpired || !session.job) {
+      return false;
+    }
+
+    const job = session.job;
+    job.workerName = workerInfo.workerName;
+    if (workerInfo.workerId) job.workerId = workerInfo.workerId;
+    if (workerInfo.line) job.line = workerInfo.line;
+    if (workerInfo.shift) job.shift = workerInfo.shift;
+    job.workerMac = workerInfo.deviceMac;
+
+    job.sessionTracker = {
+      workerName: workerInfo.workerName,
+      workerId: workerInfo.workerId,
+      deviceMac: workerInfo.deviceMac,
+      deviceInfo: workerInfo.deviceInfo,
+      joinedAt: new Date().toISOString()
+    };
+
+    if (!job.sessionAccessLogs) job.sessionAccessLogs = [];
+    job.sessionAccessLogs.unshift({
+      id: `ACCESS-${Date.now()}`,
+      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      workerName: workerInfo.workerName,
+      workerId: workerInfo.workerId,
+      deviceMac: workerInfo.deviceMac,
+      deviceInfo: workerInfo.deviceInfo,
+      action: 'CHECK_IN'
+    });
+
+    this.saveToStorage();
+    return true;
+  }
+
+  public submitWorkerSessionResults(
+    jobId: string,
+    token: string,
+    stepResults: StepResult[],
+    workerInfo?: { workerName?: string; workerId?: string; line?: string; shift?: string; deviceMac?: string; deviceInfo?: string }
+  ) {
+    this.loadFromStorage();
+    const session = this.validateJobSession(jobId, token);
+    if (!session.isValid) {
+      return { success: false, message: 'URL phiên làm việc không hợp lệ hoặc không tồn tại.' };
+    }
+    if (session.isExpired) {
+      return { success: false, message: 'URL phiên làm việc đã HẾT HẠN (quá 24 giờ kể từ khi xuất link). Vui lòng liên hệ QC Admin.' };
+    }
+
+    const job = session.job!;
+    job.stepResults = stepResults;
+    
+    if (workerInfo?.workerName) job.workerName = workerInfo.workerName;
+    if (workerInfo?.workerId) job.workerId = workerInfo.workerId;
+    if (workerInfo?.line) job.line = workerInfo.line;
+    if (workerInfo?.shift) job.shift = workerInfo.shift;
+    if (workerInfo?.deviceMac) job.workerMac = workerInfo.deviceMac;
+
+    const hasFailedStep = stepResults.some(s => s.status === 'FAIL');
+    job.status = hasFailedStep ? 'FAILED' : 'COMPLETED';
+    job.updatedAt = new Date().toISOString();
+    job.completedAt = new Date().toISOString();
+
+    if (!job.sessionAccessLogs) job.sessionAccessLogs = [];
+    job.sessionAccessLogs.unshift({
+      id: `SUBMIT-${Date.now()}`,
+      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      workerName: job.workerName || 'Công nhân qua Session URL',
+      workerId: job.workerId,
+      deviceMac: workerInfo?.deviceMac || job.workerMac || 'N/A',
+      deviceInfo: workerInfo?.deviceInfo || 'Standard Web Browser',
+      action: 'SUBMITTED'
+    });
+
+    const auditLog: AuditLogEntry = {
+      id: `LOG-${Date.now()}`,
+      jobId,
+      adminName: job.workerName || 'Công nhân qua Session URL',
+      action: `Nộp Kết quả Kiểm định qua URL Session [MAC: ${job.workerMac || 'N/A'}]`,
+      fieldChanged: 'StepResults & Status',
+      oldValue: 'IN_PROGRESS',
+      newValue: job.status,
+      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19)
+    };
+    this.logs.unshift(auditLog);
+
+    this.saveToStorage();
+    return { success: true, message: 'Nộp kết quả kiểm tra thành công!', job };
   }
 
   // --- WORKER SIMULATION ---

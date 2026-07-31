@@ -18,7 +18,8 @@ import {
   Camera,
   Layers,
   FileText,
-  Loader2
+  Loader2,
+  Laptop
 } from 'lucide-react';
 import { InspectionJob, ChecklistTemplate } from '../../types/qc';
 import { qcService } from '../../services/qcService';
@@ -221,6 +222,55 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                 </span>
               </div>
             </div>
+
+            {/* Session Tracking & MAC Address Card */}
+            {(currentJob.workerMac || currentJob.sessionTracker || (currentJob.sessionAccessLogs && currentJob.sessionAccessLogs.length > 0)) && (
+              <div className="bg-slate-900 text-white p-4 rounded-xl space-y-3 shadow-md border border-slate-800">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span className="font-bold text-xs text-white uppercase tracking-wider">Tracking Session Link & Đăng Nhập Thiết Bị</span>
+                  </div>
+                  {currentJob.workerMac && (
+                    <span className="px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[11px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                      <Laptop className="w-3 h-3" />
+                      MAC: {currentJob.workerMac}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="bg-slate-800 p-2.5 rounded-lg border border-slate-700 space-y-0.5">
+                    <span className="text-slate-400 block text-[11px]">Người mở link:</span>
+                    <span className="font-bold text-white">{currentJob.workerName || 'Công nhân'}</span>
+                  </div>
+                  <div className="bg-slate-800 p-2.5 rounded-lg border border-slate-700 space-y-0.5">
+                    <span className="text-slate-400 block text-[11px]">Địa chỉ MAC thiết bị:</span>
+                    <span className="font-mono font-bold text-emerald-400">{currentJob.workerMac || 'Chưa ghi nhận'}</span>
+                  </div>
+                  <div className="bg-slate-800 p-2.5 rounded-lg border border-slate-700 space-y-0.5">
+                    <span className="text-slate-400 block text-[11px]">Trình duyệt / OS:</span>
+                    <span className="font-bold text-slate-200">{currentJob.sessionTracker?.deviceInfo || 'Chrome (Mobile Web)'}</span>
+                  </div>
+                </div>
+
+                {currentJob.sessionAccessLogs && currentJob.sessionAccessLogs.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[11px] font-semibold text-slate-400 block">Lịch sử truy cập session link (Tracking Logs):</span>
+                    <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                      {currentJob.sessionAccessLogs.map((log) => (
+                        <div key={log.id} className="flex flex-wrap items-center justify-between gap-1 text-[11px] bg-slate-800/80 px-2.5 py-1.5 rounded border border-slate-700/60">
+                          <span className="text-slate-400 font-mono">{log.timestamp}</span>
+                          <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">{log.action}</span>
+                          <span className="text-slate-200 font-semibold">{log.workerName}</span>
+                          <span className="text-emerald-400 font-mono text-[10px]">{log.deviceMac}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Step Results Detailed Cards */}
             <div className="space-y-4">

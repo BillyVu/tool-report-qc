@@ -25,9 +25,11 @@ import {
   Sparkles,
   ChevronDown,
   ChevronUp,
-  Zap
+  Zap,
+  Sliders
 } from 'lucide-react';
-import { InspectionStep, StepInputType, AiDetectType } from '../../types/qc';
+import { InspectionStep, StepInputType, AiDetectType, PhotoSlotConfig, PhotoType } from '../../types/qc';
+import { PHOTO_TYPE_OPTIONS, getPhotoTypeInfo } from '../../constants/photoTypes';
 
 interface SortableStepItemProps {
   step: InspectionStep;
@@ -37,63 +39,67 @@ interface SortableStepItemProps {
   onConfigureMapping: (step: InspectionStep, index: number) => void;
 }
 
-const PRESET_PHOTO_SLOTS: { name: string; count: number; slots: string[] }[] = [
+const PRESET_PHOTO_SLOTS: { 
+  name: string; 
+  count: number; 
+  slots: { label: string; photoType: PhotoType }[] 
+}[] = [
   {
     name: '📱 6 Slots Ngoại quan (Visual)',
     count: 6,
     slots: [
-      'Slot 1: Mặt trước',
-      'Slot 2: Mặt sau',
-      'Slot 3: Cạnh trái',
-      'Slot 4: Cạnh phải',
-      'Slot 5: Đỉnh máy',
-      'Slot 6: Đáy máy'
+      { label: 'Slot 1: Mặt trước (Kính)', photoType: 'VISUAL_FRONT' },
+      { label: 'Slot 2: Mặt sau (Lưng / Camera)', photoType: 'VISUAL_BACK' },
+      { label: 'Slot 3: Cạnh trái', photoType: 'VISUAL_SIDES' },
+      { label: 'Slot 4: Cạnh phải', photoType: 'VISUAL_SIDES' },
+      { label: 'Slot 5: Đỉnh máy', photoType: 'VISUAL_SIDES' },
+      { label: 'Slot 6: Đáy máy', photoType: 'VISUAL_SIDES' }
     ]
   },
   {
     name: '⚡ 2 Slots Bật/Tắt (Animation)',
     count: 2,
     slots: [
-      'Slot 1: Màn hình Logo Khởi động (Bootup)',
-      'Slot 2: Màn hình Tắt máy (Power Down)'
+      { label: 'Slot 1: Màn hình Logo Khởi động (Bootup)', photoType: 'ANIMATION_BOOT' },
+      { label: 'Slot 2: Màn hình Tắt máy (Power Down)', photoType: 'ANIMATION_SHUTDOWN' }
     ]
   },
   {
     name: '🔢 2 Slots IMEI / Build',
     count: 2,
     slots: [
-      'Slot 1: Màn hình bấm *#06#',
-      'Slot 2: Màn hình Settings -> About Phone'
+      { label: 'Slot 1: Màn hình bấm *#06#', photoType: 'IMEI_DIAL' },
+      { label: 'Slot 2: Màn hình Settings -> About Phone', photoType: 'SETTINGS_ABOUT' }
     ]
   },
   {
     name: '📷 4 Slots Camera & Mic',
     count: 4,
     slots: [
-      'Slot 1: Chụp bảng màu Color Wheel',
-      'Slot 2: Phông nền Trắng',
-      'Slot 3: Phông nền Đen',
-      'Slot 4: Preview Video đã quay kèm kiểm tra mic'
+      { label: 'Slot 1: Chụp bảng màu Color Wheel', photoType: 'CAMERA_COLOR_WHEEL' },
+      { label: 'Slot 2: Phông nền Trắng', photoType: 'CAMERA_WHITE_BG' },
+      { label: 'Slot 3: Phông nền Đen', photoType: 'CAMERA_BLACK_BG' },
+      { label: 'Slot 4: Preview Video & Mic', photoType: 'CAMERA_MIC_TEST' }
     ]
   },
   {
     name: '📶 3 Slots Bluetooth',
     count: 3,
     slots: [
-      'Slot 1: Màn hình quét danh sách thiết bị',
-      'Slot 2: Màn hình đã ghép nối (Paired)',
-      'Slot 3: Kết quả truyền tệp mẫu (File transfer)'
+      { label: 'Slot 1: Màn hình quét danh sách thiết bị', photoType: 'BLUETOOTH_SCAN' },
+      { label: 'Slot 2: Màn hình đã ghép nối (Paired)', photoType: 'BLUETOOTH_PAIRED' },
+      { label: 'Slot 3: Kết quả truyền tệp mẫu', photoType: 'BLUETOOTH_TRANSFER' }
     ]
   },
   {
     name: '🎨 5 Slots MMI LCD Color (##8##)',
     count: 5,
     slots: [
-      'Slot 1: Màn hình Đỏ (Red)',
-      'Slot 2: Màn hình Xanh lá (Green)',
-      'Slot 3: Màn hình Xanh dương (Blue)',
-      'Slot 4: Màn hình Trắng (White)',
-      'Slot 5: Màn hình Đen (Black) nghiêng 45°'
+      { label: 'Slot 1: Màn hình Đỏ (Red)', photoType: 'MMI_RED' },
+      { label: 'Slot 2: Màn hình Xanh lá (Green)', photoType: 'MMI_GREEN' },
+      { label: 'Slot 3: Màn hình Xanh dương (Blue)', photoType: 'MMI_BLUE' },
+      { label: 'Slot 4: Màn hình Trắng (White)', photoType: 'MMI_WHITE' },
+      { label: 'Slot 5: Màn hình Đen nghiêng 45°', photoType: 'MMI_BLACK' }
     ]
   }
 ];
@@ -122,21 +128,34 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
     zIndex: isDragging ? 50 : 1
   };
 
-  const photoCount = step.requiredPhotoCount ?? (step.photoSlots ? step.photoSlots.length : 1);
-  const photoSlots = step.photoSlots || Array.from({ length: photoCount }, (_, i) => `Slot ${i + 1}: Mô tả ảnh ${i + 1}`);
+  const photoCount = step.requiredPhotoCount ?? (step.photoSlotConfigs ? step.photoSlotConfigs.length : (step.photoSlots ? step.photoSlots.length : 1));
+
+  // Build current photoSlotConfigs
+  const slotConfigs: PhotoSlotConfig[] = step.photoSlotConfigs || (
+    (step.photoSlots || Array.from({ length: photoCount }, (_, i) => `Slot ${i + 1}: Mô tả ảnh ${i + 1}`)).map((lbl, i) => ({
+      slotIndex: i + 1,
+      label: lbl,
+      photoType: 'GENERAL_OTHER'
+    }))
+  );
 
   const handlePhotoCountChange = (count: number) => {
     const newCount = Math.max(0, count);
-    const newSlots = [...photoSlots];
-    if (newCount > newSlots.length) {
-      for (let i = newSlots.length; i < newCount; i++) {
-        newSlots.push(`Slot ${i + 1}: Mô tả ảnh ${i + 1}`);
+    const updated = [...slotConfigs];
+    if (newCount > updated.length) {
+      for (let i = updated.length; i < newCount; i++) {
+        updated.push({
+          slotIndex: i + 1,
+          label: `Slot ${i + 1}: Mô tả ảnh ${i + 1}`,
+          photoType: 'GENERAL_OTHER'
+        });
       }
-    } else if (newCount < newSlots.length) {
-      newSlots.splice(newCount);
+    } else if (newCount < updated.length) {
+      updated.splice(newCount);
     }
     onUpdateStep(index, 'requiredPhotoCount', newCount);
-    onUpdateStep(index, 'photoSlots', newSlots);
+    onUpdateStep(index, 'photoSlotConfigs', updated);
+    onUpdateStep(index, 'photoSlots', updated.map(s => s.label));
     if (newCount === 0 && step.inputType === 'PHOTO') {
       onUpdateStep(index, 'isPhotoRequired', false);
     } else if (newCount > 0) {
@@ -145,14 +164,28 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
   };
 
   const handleSlotLabelChange = (slotIdx: number, newLabel: string) => {
-    const updated = [...photoSlots];
-    updated[slotIdx] = newLabel;
-    onUpdateStep(index, 'photoSlots', updated);
+    const updated = [...slotConfigs];
+    updated[slotIdx] = { ...updated[slotIdx], label: newLabel };
+    onUpdateStep(index, 'photoSlotConfigs', updated);
+    onUpdateStep(index, 'photoSlots', updated.map(s => s.label));
+  };
+
+  const handleSlotPhotoTypeChange = (slotIdx: number, newType: PhotoType) => {
+    const updated = [...slotConfigs];
+    updated[slotIdx] = { ...updated[slotIdx], photoType: newType };
+    onUpdateStep(index, 'photoSlotConfigs', updated);
   };
 
   const handleApplyPreset = (preset: typeof PRESET_PHOTO_SLOTS[0]) => {
+    const updated: PhotoSlotConfig[] = preset.slots.map((s, idx) => ({
+      slotIndex: idx + 1,
+      label: s.label,
+      photoType: s.photoType
+    }));
+
     onUpdateStep(index, 'requiredPhotoCount', preset.count);
-    onUpdateStep(index, 'photoSlots', preset.slots);
+    onUpdateStep(index, 'photoSlotConfigs', updated);
+    onUpdateStep(index, 'photoSlots', updated.map(s => s.label));
     onUpdateStep(index, 'isPhotoRequired', true);
   };
 
@@ -363,19 +396,37 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
                 </div>
 
                 {/* Slots Inputs Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                  {photoSlots.slice(0, photoCount).map((slotLabel, sIdx) => (
-                    <div key={sIdx} className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-slate-200">
-                      <span className="font-bold text-[10px] text-slate-500 bg-slate-100 px-1.5 py-1 rounded shrink-0">
-                        #{sIdx + 1}
-                      </span>
-                      <input
-                        type="text"
-                        value={slotLabel}
-                        onChange={(e) => handleSlotLabelChange(sIdx, e.target.value)}
-                        placeholder={`Mô tả cho Slot ${sIdx + 1}...`}
-                        className="w-full text-xs bg-transparent border-none focus:outline-none text-slate-800 font-medium"
-                      />
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                  {slotConfigs.slice(0, photoCount).map((slot, sIdx) => (
+                    <div key={sIdx} className="bg-white p-2 rounded-lg border border-slate-200 space-y-1.5 shadow-xs">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                          Slot #{sIdx + 1}
+                        </span>
+                        <input
+                          type="text"
+                          value={slot.label}
+                          onChange={(e) => handleSlotLabelChange(sIdx, e.target.value)}
+                          placeholder={`Mô tả cho Slot ${sIdx + 1}...`}
+                          className="w-full text-xs font-semibold text-slate-800 focus:outline-none border-b border-transparent focus:border-blue-500 px-1 py-0.5"
+                        />
+                      </div>
+
+                      {/* Photo Type Selector */}
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-slate-400 font-medium shrink-0">Loại ảnh:</span>
+                        <select
+                          value={slot.photoType || 'GENERAL_OTHER'}
+                          onChange={(e) => handleSlotPhotoTypeChange(sIdx, e.target.value as PhotoType)}
+                          className="w-full text-[11px] font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          {PHOTO_TYPE_OPTIONS.map((opt) => (
+                            <option key={opt.type} value={opt.type}>
+                              {opt.iconEmoji} {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   ))}
                 </div>

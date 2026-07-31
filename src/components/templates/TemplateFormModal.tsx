@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Plus, Check, X, FileText, Upload, Sparkles, AlertCircle } from 'lucide-react';
+import { Plus, Check, X, FileText, Upload, Sparkles, AlertCircle, Eye } from 'lucide-react';
 import { ChecklistTemplate, InspectionStep, DocxMapping } from '../../types/qc';
 import { StepDraggableList } from './StepDraggableList';
 import { DocxMappingModal } from './DocxMappingModal';
+import { TemplatePreviewModal } from './TemplatePreviewModal';
 
 interface TemplateFormModalProps {
   isOpen: boolean;
@@ -48,6 +49,21 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
   // Mapping Modal State
   const [activeMappingStepIndex, setActiveMappingStepIndex] = useState<number | null>(null);
+
+  // Live Preview Modal State
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+
+  const currentPreviewData: ChecklistTemplate = {
+    id: template?.id || 'PREVIEW_TEMP',
+    title: title || 'Mẫu QC Chưa Đặt Tên',
+    productCode: productCode || 'PHONE_GENERIC',
+    productName: productName || 'Điện thoại thông minh',
+    docxTemplateName: docxTemplateName || 'Mau_Bao_Cao_QC_Chuan.docx',
+    version: version || '1.0.0',
+    steps: steps,
+    createdAt: template?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
 
   const handleAddStep = () => {
     const nextStepNum = steps.length + 1;
@@ -407,22 +423,34 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
           </form>
 
           {/* Footer Actions */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-3 shrink-0">
+          <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
             <button
               type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors"
+              onClick={() => setIsPreviewOpen(true)}
+              className="px-4 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              title="Xem trước giao diện công nhân làm việc với mẫu hiện tại"
             >
-              Hủy
+              <Eye className="w-4 h-4 text-amber-600" />
+              <span>Xem Trước Mẫu (Worker Preview)</span>
             </button>
-            <button
-              type="button"
-              onClick={handleFormSubmit}
-              className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
-            >
-              <Check className="w-4 h-4" />
-              <span>{isEdit ? 'Cập Nhật Mẫu Checklist' : 'Tạo Mẫu Mới'}</span>
-            </button>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleFormSubmit}
+                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                <span>{isEdit ? 'Cập Nhật Mẫu Checklist' : 'Tạo Mẫu Mới'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -435,6 +463,13 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
         stepIndex={activeMappingStepIndex ?? 0}
         docxTemplateName={docxTemplateName}
         onSaveMapping={handleSaveMapping}
+      />
+
+      {/* Live Preview Modal */}
+      <TemplatePreviewModal
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        template={currentPreviewData}
       />
     </>
   );
