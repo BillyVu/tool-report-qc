@@ -1,48 +1,195 @@
-# Tool Report QC Deployment
+# Tool Report QC - Hướng dẫn deploy
 
-Trạng thái hiện tại: chuẩn bị cho môi trường tester/local trước. Chỉ build và chạy trên VPS khi có yêu cầu triển khai rõ ràng.
+Tài liệu này mô tả cách vận hành và deploy `tool-report-qc` lên VPS `36.50.176.196`.
 
-## Local Tester
+Trạng thái hiện tại:
 
-Chạy API ở cổng `3020`, Vite ở cổng frontend đang dùng. Vite proxy `/api` sang `http://127.0.0.1:3020`.
+- Production URL: `https://qc.apexdev.website`
+- Health check public: `https://qc.apexdev.website/api/health`
+- App source trên VPS: `/opt/tool-report-qc`
+- Production `.env` trên VPS: `/opt/tool-report-qc/.env`
+- Ảnh upload lưu trên VPS: `/srv/tool-report-qc/uploads`
+- Reverse proxy: Traefik gateway hiện có trên VPS
+- Docker Compose project: `tool-report-qc`
+- Git branch triển khai hiện tại: `feature/vps-auto-deploy`
 
-```bash
-cp .env.example .env
-npm install
-npm run migrate
-PORT=3020 npm run start:api
-npm run dev
+## 1. Kiến trúc production
+
+Stack production chạy hoàn toàn trên VPS:
+
+- `qc-api`: Node/Express API + serve frontend build
+- `qc-postgres`: PostgreSQL 16, lưu dữ liệu QC
+- `qc-rabbitmq`: RabbitMQ, xử lý hàng đợi chống quá tải
+- `qc-worker`: worker xử lý photo job
+- `qc-gemini-worker`: worker gọi Gemini server-side, có retry/backoff/circuit breaker
+- Upload ảnh: bind mount từ VPS `/srv/tool-report-qc/uploads`
+
+Public traffic đi qua Traefik:
+
+```text
+Internet
+  -> https://qc.apexdev.website
+  -> traefik_gateway
+  -> http://tool-report-qc-app:3000
 ```
 
-Biến `VITE_QC_ADMIN_API_KEY` chỉ dùng để verify local nội bộ. Không dùng key này trong frontend public production.
+Không expose PostgreSQL/RabbitMQ ra Internet.
 
-## VPS Nội Bộ
+## 2. File quan trọng
 
-Stack VPS dùng PostgreSQL và RabbitMQ local qua Docker Compose. Ảnh lưu tại `/srv/tool-report-qc/uploads` trên VPS, không dùng object storage bên ngoài. PostgreSQL và RabbitMQ không expose ra Internet.
+Trong repo:
+
+```text
+Dockerfile
+docker-compose.yml
+.env.vps.example
+.github/workflows/deploy.yml
+DEPLOYMENT.md
+docs/superpowers/plans/2026-08-02-vps-auto-deploy.md
+```
+
+Trên VPS:
+
+```text
+/opt/tool-report-qc
+/opt/tool-report-qc/.env
+/srv/tool-report-qc/uploads
+/root/service/gateway/config/dynamic.yml
+```
+
+## 3. Deploy thủ công lên VPS
+
+Dùng khi cần deploy ngay từ máy local, không chờ GitHub Actions.
+
+### 3.1 Verify local trước khi deploy
 
 ```bash
-cp .env.vps.example .env
+cd /Users/apexdev/Desktop/bot-Dung/tool-report-qc
+npm test
+npm run lint
+npm run build
+POSTGRES_PASSWORD=dummy \
+QC_ADMIN_API_KEY=dummy \
+RABBITMQ_PASSWORD=dummy \
+GEMINI_API_KEY=dummy \
+docker compose config >/tmp/tool-report-qc-compose.yml
+```
+
+Yêu cầu:
+
+- Test pass.
+- Typecheck/lint pass.
+- Build pass.
+- Docker Compose config hợp lệ.
+
+### 3.2 Gói source từ commit hiện tại
+
+```bash
+cd /Users/apexdev/Desktop/bot-Dung/tool-report-qc
+archive_path=/tmp/tool-report-qc-$(git rev-parse --short HEAD).tgz
+git archive --format=tar.gz -o "$archive_path" HEAD
+```
+
+### 3.3 Copy source lên VPS
+
+```bash
+scp "$archive_path" root@36.50.176.196:/tmp/tool-report-qc-source.tgz
+```
+
+### 3.4 Giải nén và chạy Docker Compose
+
+```bash
+ssh root@36.50.176.196 'set -euo pipefail
+APP_DIR=/opt/tool-report-qc
+test "$APP_DIR" = "/opt/tool-report-qc"
+test -f "$APP_DIR/.env"
 mkdir -p /srv/tool-report-qc/uploads
-docker compose up -d --build
-curl http://127.0.0.1:3020/api/health
+find "$APP_DIR" -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
+tar -xzf /tmp/tool-report-qc-source.tgz -C "$APP_DIR"
+rm -f /tmp/tool-report-qc-source.tgz
+cd "$APP_DIR"
+docker compose -p tool-report-qc up -d --build
+'
 ```
 
-API bind `127.0.0.1:3020`, cần reverse proxy HTTPS trước khi public.
+Lưu ý:
 
-## Auto Deploy bằng GitHub Actions
+- Lệnh trên giữ lại `/opt/tool-report-qc/.env`.
+- Không xoá Docker volumes của PostgreSQL/RabbitMQ.
+- Không xoá `/srv/tool-report-qc/uploads`.
 
-Workflow `.github/workflows/deploy.yml` tự chạy khi có push vào branch `main`.
+### 3.5 Verify sau deploy
+
+```bash
+ssh root@36.50.176.196 'set -e
+cd /opt/tool-report-qc
+docker compose -p tool-report-qc ps
+curl --fail http://127.0.0.1:3020/api/health
+docker compose -p tool-report-qc exec -T qc-rabbitmq rabbitmqctl list_queues name messages consumers
+'
+```
+
+Public health:
+
+```bash
+curl --fail https://qc.apexdev.website/api/health
+```
+
+Kết quả mong đợi:
+
+```json
+{"status":"ok"}
+```
+
+Queue mong đợi:
+
+```text
+qc.photo-processing   0   1
+qc.gemini-analysis    0   1
+```
+
+## 4. Auto deploy bằng GitHub Actions
+
+Workflow: `.github/workflows/deploy.yml`
+
+Trigger:
+
+- Tự chạy khi có push vào branch `main`.
+- Có thể chạy thủ công bằng `workflow_dispatch`.
 
 Luồng deploy:
 
-1. GitHub Actions chạy `npm ci`, `npm test`, `npm run lint`, `npm run build`, `docker compose config`.
-2. Nếu verify pass, workflow SSH vào VPS.
-3. GitHub Actions đóng gói source của đúng commit `${GITHUB_SHA}` và copy archive qua SSH.
-4. VPS giữ nguyên `.env`, PostgreSQL volume, RabbitMQ volume và `/srv/tool-report-qc/uploads`.
-5. VPS giải nén source vào `/opt/tool-report-qc` và chạy `docker compose -p tool-report-qc up -d --build`.
-6. Health check `http://127.0.0.1:3020/api/health`.
+1. GitHub Actions checkout code.
+2. Chạy verify:
+   - `npm ci`
+   - `npm test`
+   - `npm run lint`
+   - `npm run build`
+   - `docker compose config`
+3. Nếu verify pass, workflow đóng gói source của đúng commit `${GITHUB_SHA}`.
+4. Copy archive qua SSH lên VPS.
+5. VPS giữ nguyên `.env`, volumes, uploads.
+6. VPS chạy:
 
-Repository secrets cần tạo trong GitHub:
+```bash
+docker compose -p tool-report-qc up -d --build
+```
+
+7. Workflow health check:
+
+```bash
+curl --fail http://127.0.0.1:3020/api/health
+```
+
+## 5. GitHub Secrets cần cấu hình
+
+Vào GitHub repo:
+
+```text
+Settings -> Secrets and variables -> Actions -> Repository secrets
+```
+
+Tạo các secrets:
 
 ```text
 VPS_HOST=36.50.176.196
@@ -50,48 +197,227 @@ VPS_USER=root
 VPS_PORT=22
 VPS_APP_DIR=/opt/tool-report-qc
 VPS_SSH_KEY=<private deploy key>
-VPS_KNOWN_HOSTS=<output cua ssh-keyscan>
+VPS_KNOWN_HOSTS=<known_hosts cua VPS>
 ```
 
-Tạo deploy key:
+Local đã tạo sẵn deploy key tại:
+
+```text
+/Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/github-actions-vps-deploy-key
+```
+
+Nội dung file này dùng cho secret:
+
+```text
+VPS_SSH_KEY
+```
+
+Local đã tạo sẵn known hosts tại:
+
+```text
+/Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/vps_known_hosts
+```
+
+Nội dung file này dùng cho secret:
+
+```text
+VPS_KNOWN_HOSTS
+```
+
+Không commit thư mục `.secrets` vào Git.
+
+## 6. One-time VPS setup
+
+Các bước này đã được thực hiện trên VPS, chỉ cần làm lại nếu rebuild VPS mới.
+
+### 6.1 Tạo thư mục
 
 ```bash
-ssh-keygen -t ed25519 -f /Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/github-actions-vps-deploy-key -C "tool-report-qc-github-actions"
-ssh-copy-id -i /Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/github-actions-vps-deploy-key.pub root@36.50.176.196
-ssh-keyscan -p 22 36.50.176.196 > /Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/vps_known_hosts
+ssh root@36.50.176.196 'set -e
+mkdir -p /opt/tool-report-qc
+mkdir -p /srv/tool-report-qc/uploads
+chmod 755 /opt/tool-report-qc
+chmod 755 /srv/tool-report-qc
+chmod 755 /srv/tool-report-qc/uploads
+'
 ```
 
-Trên VPS, chuẩn bị thư mục app một lần:
+### 6.2 Tạo production env
+
+File:
+
+```text
+/opt/tool-report-qc/.env
+```
+
+Mẫu:
+
+```env
+POSTGRES_DB=tool_report_qc
+POSTGRES_USER=tool_report_qc
+POSTGRES_PASSWORD=<strong-password>
+QC_ADMIN_API_KEY=<strong-admin-key>
+RABBITMQ_USER=tool_report_qc
+RABBITMQ_PASSWORD=<strong-password>
+WORKER_PREFETCH=2
+GEMINI_API_KEY=<server-side-gemini-key>
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MAX_RPM=10
+GEMINI_CIRCUIT_COOLDOWN_MS=300000
+PORT=3020
+UPLOADS_DIR=/srv/tool-report-qc/uploads
+```
+
+Set quyền:
 
 ```bash
-mkdir -p /opt/tool-report-qc /srv/tool-report-qc/uploads
-# tao /opt/tool-report-qc/.env tu .env.vps.example
-# dien POSTGRES_PASSWORD, QC_ADMIN_API_KEY, RABBITMQ_PASSWORD, GEMINI_API_KEY
+ssh root@36.50.176.196 'chmod 600 /opt/tool-report-qc/.env'
 ```
 
-Sau khi setup xong, mỗi commit được push lên `main` sẽ tự deploy lại. Không lưu `.env` production trong GitHub.
+Không đưa `VITE_GEMINI_API_KEY` vào production.
 
-## Gemini
+## 7. Traefik route
 
-Gemini chỉ chạy server-side trong `qc-gemini-worker`. Không cấu hình `VITE_GEMINI_API_KEY`.
+Traefik config:
 
-Cơ chế chống lỗi quota:
+```text
+/root/service/gateway/config/dynamic.yml
+```
 
-- job Gemini vào RabbitMQ, không gọi trực tiếp từ browser;
-- retry exponential backoff kèm jitter;
-- circuit breaker sau nhiều lỗi quota liên tiếp;
-- cache theo hash ảnh, model và detect type;
-- kết quả/lỗi lưu trong PostgreSQL để tester không mất dữ liệu.
+Route đã thêm:
 
-## Verification
+```yaml
+tool-report-qc-router:
+  rule: "Host(`qc.apexdev.website`)"
+  entryPoints:
+    - websecure
+  service: tool-report-qc-service
+  middlewares:
+    - block-scanners
+    - secure-headers
+  tls:
+    certResolver: letsencrypt
+  priority: 75
+```
 
-Trước khi triển khai VPS:
+Service:
+
+```yaml
+tool-report-qc-service:
+  loadBalancer:
+    servers:
+      - url: "http://tool-report-qc-app:3000"
+    passHostHeader: true
+```
+
+Backup hiện có:
+
+```text
+/root/service/gateway/config/dynamic.yml.bak.20260802155721
+```
+
+Nếu cần kiểm tra:
 
 ```bash
-npm test
-npm run lint
-npm run build
-docker compose config
+ssh root@36.50.176.196 'grep -n "tool-report-qc" /root/service/gateway/config/dynamic.yml'
 ```
 
-Docker runtime cần Docker daemon local hoặc chạy trên VPS. Nếu daemon local không bật thì chỉ xác nhận được cấu hình Compose, chưa xác nhận container chạy thật.
+## 8. DNS
+
+DNS cần trỏ:
+
+```text
+qc.apexdev.website -> 36.50.176.196
+```
+
+Kiểm tra:
+
+```bash
+dig +short qc.apexdev.website
+```
+
+Kết quả mong đợi:
+
+```text
+36.50.176.196
+```
+
+## 9. Lệnh vận hành thường dùng
+
+Xem container:
+
+```bash
+ssh root@36.50.176.196 'cd /opt/tool-report-qc && docker compose -p tool-report-qc ps'
+```
+
+Xem log:
+
+```bash
+ssh root@36.50.176.196 'cd /opt/tool-report-qc && docker compose -p tool-report-qc logs --tail 150 qc-api qc-worker qc-gemini-worker'
+```
+
+Restart app:
+
+```bash
+ssh root@36.50.176.196 'cd /opt/tool-report-qc && docker compose -p tool-report-qc restart qc-api qc-worker qc-gemini-worker'
+```
+
+Xem queue:
+
+```bash
+ssh root@36.50.176.196 'cd /opt/tool-report-qc && docker compose -p tool-report-qc exec -T qc-rabbitmq rabbitmqctl list_queues name messages consumers'
+```
+
+Kiểm tra upload folder:
+
+```bash
+ssh root@36.50.176.196 'find /srv/tool-report-qc/uploads -maxdepth 2 -type f | head'
+```
+
+## 10. Rollback
+
+Nếu deploy lỗi ngay sau khi lên code mới, rollback bằng commit cũ từ local:
+
+```bash
+cd /Users/apexdev/Desktop/bot-Dung/tool-report-qc
+git checkout <previous-good-commit>
+archive_path=/tmp/tool-report-qc-rollback.tgz
+git archive --format=tar.gz -o "$archive_path" HEAD
+scp "$archive_path" root@36.50.176.196:/tmp/tool-report-qc-source.tgz
+ssh root@36.50.176.196 'set -euo pipefail
+APP_DIR=/opt/tool-report-qc
+find "$APP_DIR" -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
+tar -xzf /tmp/tool-report-qc-source.tgz -C "$APP_DIR"
+rm -f /tmp/tool-report-qc-source.tgz
+cd "$APP_DIR"
+docker compose -p tool-report-qc up -d --build
+curl --fail http://127.0.0.1:3020/api/health
+'
+```
+
+Không rollback bằng cách xoá volume, trừ khi chủ động muốn mất dữ liệu.
+
+## 11. Bảo mật
+
+- Không commit `.env`.
+- Không commit private deploy key.
+- Không expose PostgreSQL/RabbitMQ public.
+- `GEMINI_API_KEY` chỉ nằm server-side.
+- Nếu key bị lộ trong log/chat/tool output, rotate key trong Google AI Studio rồi cập nhật `/opt/tool-report-qc/.env`.
+- Sau khi đổi secret, restart services:
+
+```bash
+ssh root@36.50.176.196 'cd /opt/tool-report-qc && docker compose -p tool-report-qc up -d'
+```
+
+## 12. Checklist trước khi merge vào `main`
+
+- [ ] GitHub Actions secrets đã tạo đủ.
+- [ ] `npm test` pass.
+- [ ] `npm run lint` pass.
+- [ ] `npm run build` pass.
+- [ ] `docker compose config` pass.
+- [ ] `https://qc.apexdev.website/api/health` đang OK.
+- [ ] Người phụ trách đã rotate `GEMINI_API_KEY` nếu cần.
+
+Sau khi checklist pass, merge branch `feature/vps-auto-deploy` vào `main`. Từ đó, mỗi push vào `main` sẽ auto deploy lại VPS.
