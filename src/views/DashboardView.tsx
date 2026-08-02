@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   ClipboardList, 
   Clock, 
@@ -15,8 +15,8 @@ import {
   Eye,
   Zap
 } from 'lucide-react';
-import { InspectionJob } from '../types/qc';
-import { qcService } from '../services/qcService';
+import { DashboardKPI, InspectionJob } from '../types/qc';
+import { adminApi } from '../services/adminApi';
 import { generateDocxReport } from '../services/docxExportService';
 
 interface DashboardViewProps {
@@ -28,13 +28,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateTab,
   onSelectJobForReview
 }) => {
-  const kpis = qcService.getKPIs();
-  const recentJobs = qcService.getJobs().slice(0, 5);
-  const failedJobs = qcService.getJobs().filter(j => j.status === 'FAILED');
+  const [kpis, setKpis] = useState<DashboardKPI>({ totalJobs: 0, inProgress: 0, completed: 0, failed: 0, passRate: 100, todayCount: 0 });
+  const [jobs, setJobs] = useState<InspectionJob[]>([]);
+  const [loadError, setLoadError] = useState('');
+
+  const loadDashboard = async () => {
+    setLoadError('');
+    try {
+      const [nextKpis, nextJobs] = await Promise.all([adminApi.getKpis(), adminApi.listJobs()]);
+      setKpis(nextKpis);
+      setJobs(nextJobs);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Không tải được dashboard từ server.');
+    }
+  };
+
+  useEffect(() => {
+    void loadDashboard();
+  }, []);
+
+  const recentJobs = jobs.slice(0, 5);
+  const failedJobs = jobs.filter(j => j.status === 'FAILED');
 
   const handleQuickExport = async (job: InspectionJob, e: React.MouseEvent) => {
     e.stopPropagation();
     await generateDocxReport(job);
+    await loadDashboard();
   };
 
   return (
@@ -68,6 +87,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 4 Core KPI Cards */}
+      {loadError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+          {loadError}. Kiểm tra Admin API Key trong mục Cài đặt.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {/* Total Jobs */}
         <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden group hover:border-blue-300 transition-all">

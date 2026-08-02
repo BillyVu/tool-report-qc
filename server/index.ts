@@ -163,11 +163,121 @@ app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {
   const jobs = await db.query(
     `SELECT external_id, batch_number, product_code, product_name, template_id, status,
             worker_id, worker_name, shift, line, created_at, updated_at, completed_at,
-            step_results, export_count, last_exported_at
+            step_results, template_snapshot, admin_notes, export_count, last_exported_at
        FROM inspection_jobs
       ORDER BY created_at DESC`,
   );
   res.json(jobs.rows);
+});
+
+app.get('/api/admin/kpis', requireAdmin, async (_req, res) => {
+  const result = await db.query(
+    `SELECT
+       count(*)::int AS total_jobs,
+       count(*) FILTER (WHERE status = 'IN_PROGRESS')::int AS in_progress,
+       count(*) FILTER (WHERE status = 'COMPLETED')::int AS completed,
+       count(*) FILTER (WHERE status = 'FAILED')::int AS failed,
+       count(*) FILTER (WHERE created_at::date = CURRENT_DATE)::int AS today_count
+     FROM inspection_jobs`,
+  );
+  const row = result.rows[0];
+  const finished = Number(row.completed) + Number(row.failed);
+  res.json({
+    totalJobs: Number(row.total_jobs),
+    inProgress: Number(row.in_progress),
+    completed: Number(row.completed),
+    failed: Number(row.failed),
+    todayCount: Number(row.today_count),
+    passRate: finished > 0 ? Math.round((Number(row.completed) / finished) * 100) : 100,
+  });
+});
+
+app.get('/api/admin/audit-events', requireAdmin, async (_req, res) => {
+  const result = await db.query(
+    `SELECT a.id, j.external_id AS job_external_id, a.actor_label, a.action, a.payload, a.created_at
+       FROM audit_events a
+       LEFT JOIN inspection_jobs j ON j.id = a.job_id
+      ORDER BY a.created_at DESC
+      LIMIT 500`,
+  );
+  res.json(result.rows.map((row) => ({
+    id: String(row.id),
+    jobId: row.job_external_id || '',
+    adminName: row.actor_label,
+    action: row.action,
+    fieldChanged: row.payload?.fieldChanged || row.payload?.field || row.action,
+    oldValue: row.payload?.oldValue || '',
+    newValue: row.payload?.newValue || '',
+    timestamp: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  })));
+});
+
+app.patch('/api/admin/jobs/:jobId/status', requireAdmin, async (req, res) => {
+  const { status, adminNotes } = req.body;
+  if (!['IN_PROGRESS', 'COMPLETED', 'FAILED'].includes(status)) return res.status(400).json({ error: 'A valid status is required.' });
+  const result = await db.query(
+    `UPDATE inspection_jobs
+        SET status = $2,
+            admin_notes = COALESCE($3, admin_notes),
+            completed_at = CASE WHEN $2 = 'COMPLETED' THEN COALESCE(completed_at, now()) ELSE completed_at END,
+            updated_at = now(),
+            version = version + 1
+      WHERE external_id = $1
+      RETURNING *`,
+    [req.params.jobId, status, adminNotes ?? null],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  await db.query(
+    `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
+     VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STATUS_UPDATED', $2)`,
+    [result.rows[0].id, toJsonbParam({ fieldChanged: 'Status', newValue: status, adminNotes })],
+  );
+  res.json(result.rows[0]);
+});
+
+app.patch('/api/admin/jobs/:jobId/step-results/:stepId/note', requireAdmin, async (req, res) => {
+  const note = String(req.body?.note ?? '');
+  const job = await db.query(`SELECT id, step_results FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
+  if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  const stepResults = Array.isArray(job.rows[0].step_results) ? job.rows[0].step_results : [];
+  let oldValue = '';
+  let found = false;
+  const updatedSteps = stepResults.map((step) => {
+    if (step?.stepId !== req.params.stepId) return step;
+    found = true;
+    oldValue = step.note || '';
+    return { ...step, originalNote: step.originalNote || step.note || '', note, editedByAdmin: true };
+  });
+  if (!found) return res.status(404).json({ error: 'Step result not found.' });
+  const result = await db.query(
+    `UPDATE inspection_jobs SET step_results = $2, updated_at = now(), version = version + 1 WHERE external_id = $1 RETURNING *`,
+    [req.params.jobId, toJsonbParam(updatedSteps)],
+  );
+  await db.query(
+    `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
+     VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STEP_NOTE_UPDATED', $2)`,
+    [job.rows[0].id, toJsonbParam({ fieldChanged: `Step ${req.params.stepId} Note`, oldValue, newValue: note })],
+  );
+  res.json(result.rows[0]);
+});
+
+app.post('/api/admin/jobs/:jobId/exports', requireAdmin, async (req, res) => {
+  const result = await db.query(
+    `UPDATE inspection_jobs
+        SET export_count = COALESCE(export_count, 0) + 1,
+            last_exported_at = now(),
+            updated_at = now()
+      WHERE external_id = $1
+      RETURNING *`,
+    [req.params.jobId],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  await db.query(
+    `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
+     VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_EXPORTED', $2)`,
+    [result.rows[0].id, toJsonbParam({ format: req.body?.format || 'docx' })],
+  );
+  res.json(result.rows[0]);
 });
 
 app.post('/api/admin/jobs/:jobId/sessions', requireAdmin, async (req, res) => {

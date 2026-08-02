@@ -21,8 +21,8 @@ import {
   Loader2,
   Laptop
 } from 'lucide-react';
-import { InspectionJob, ChecklistTemplate } from '../../types/qc';
-import { qcService } from '../../services/qcService';
+import { InspectionJob } from '../../types/qc';
+import { adminApi } from '../../services/adminApi';
 import { generateDocxReport } from '../../services/docxExportService';
 
 interface InspectionDetailDrawerProps {
@@ -68,32 +68,29 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, lightboxImageUrl, onClose]);
 
-  const template = qcService.getTemplateById(currentJob.templateId);
+  const template = currentJob.templateSnapshot;
 
   const handleStartEditNote = (stepId: string, currentNote: string) => {
     setEditingStepId(stepId);
     setEditingNoteValue(currentNote);
   };
 
-  const handleSaveEditNote = (stepId: string) => {
-    qcService.updateJobStepNote(currentJob.id, stepId, editingNoteValue);
+  const handleSaveEditNote = async (stepId: string) => {
+    const updated = await adminApi.updateJobStepNote(currentJob.id, stepId, editingNoteValue);
     setEditingStepId(null);
-    const updated = qcService.getJobById(currentJob.id);
-    if (updated) setCurrentJob({ ...updated });
+    setCurrentJob(updated);
     onJobUpdated();
   };
 
-  const handleStatusChange = (newStatus: InspectionJob['status']) => {
-    qcService.updateJobStatus(currentJob.id, newStatus, adminNotes);
-    const updated = qcService.getJobById(currentJob.id);
-    if (updated) setCurrentJob({ ...updated });
+  const handleStatusChange = async (newStatus: InspectionJob['status']) => {
+    const updated = await adminApi.updateJobStatus(currentJob.id, newStatus, adminNotes);
+    setCurrentJob(updated);
     onJobUpdated();
   };
 
-  const handleSaveAdminNotes = () => {
-    qcService.updateJobStatus(currentJob.id, currentJob.status, adminNotes);
-    const updated = qcService.getJobById(currentJob.id);
-    if (updated) setCurrentJob({ ...updated });
+  const handleSaveAdminNotes = async () => {
+    const updated = await adminApi.updateJobStatus(currentJob.id, currentJob.status, adminNotes);
+    setCurrentJob(updated);
     onJobUpdated();
   };
 
@@ -101,8 +98,6 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
     setIsExporting(true);
     try {
       await generateDocxReport(currentJob, template);
-      const updated = qcService.getJobById(currentJob.id);
-      if (updated) setCurrentJob({ ...updated });
       onJobUpdated();
     } catch (e) {
       console.error('Export DOCX error:', e);

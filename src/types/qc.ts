@@ -126,6 +126,7 @@ export interface InspectionJob {
   updatedAt: string;
   completedAt?: string;
   stepResults: StepResult[];
+  templateSnapshot?: ChecklistTemplate;
   adminNotes?: string;
   exportCount?: number;
   lastExportedAt?: string;

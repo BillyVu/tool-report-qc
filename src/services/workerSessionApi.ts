@@ -50,6 +50,14 @@ interface ApiInspectionJob {
   completed_at?: string | null;
   stepResults?: StepResult[];
   step_results?: StepResult[];
+  templateSnapshot?: ChecklistTemplate;
+  template_snapshot?: ChecklistTemplate;
+  adminNotes?: string | null;
+  admin_notes?: string | null;
+  exportCount?: number;
+  export_count?: number;
+  lastExportedAt?: string | null;
+  last_exported_at?: string | null;
 }
 
 function tokenQuery(token: string) {
@@ -84,6 +92,10 @@ export function mapInspectionJob(row: ApiInspectionJob): InspectionJob {
     updatedAt: row.updatedAt || row.updated_at || '',
     completedAt: row.completedAt || row.completed_at || undefined,
     stepResults: row.stepResults || row.step_results || [],
+    templateSnapshot: row.templateSnapshot || row.template_snapshot || undefined,
+    adminNotes: row.adminNotes || row.admin_notes || undefined,
+    exportCount: row.exportCount ?? row.export_count,
+    lastExportedAt: row.lastExportedAt || row.last_exported_at || undefined,
   };
 }
 

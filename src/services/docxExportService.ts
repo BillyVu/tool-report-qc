@@ -15,7 +15,7 @@ import {
 } from 'docx';
 import { saveAs } from 'file-saver';
 import { InspectionJob, ChecklistTemplate } from '../types/qc';
-import { qcService } from './qcService';
+import { adminApi } from './adminApi';
 
 /**
  * Helper to convert data URL or external image URL to Uint8Array for docx ImageRun
@@ -50,10 +50,9 @@ async function fetchImageBuffer(url?: string): Promise<Uint8Array | null> {
  * Guarantees zero "corrupted file" or "file extension mismatch" errors when opened in Word / Office 365 / WPS.
  */
 export async function generateDocxReport(job: InspectionJob, template?: ChecklistTemplate): Promise<void> {
-  // Record export count in QC Service
-  qcService.recordExport(job.id);
+  await adminApi.recordExport(job.id);
 
-  const matchedTemplate = template || qcService.getTemplateById(job.templateId);
+  const matchedTemplate = template || job.templateSnapshot;
 
   const dateStr = new Date(job.createdAt).toLocaleDateString('vi-VN', {
     day: '2-digit',

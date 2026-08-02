@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { 
+import {
   LayoutDashboard, 
   FileCheck2, 
   ClipboardCheck, 
@@ -7,7 +7,8 @@ import {
   Settings, 
   Plus
 } from 'lucide-react';
-import { qcService } from '../services/qcService';
+import { DashboardKPI } from '../types/qc';
+import { adminApi } from '../services/adminApi';
 import { CreateInspectionJobModal } from '../components/inspections/CreateInspectionJobModal';
 
 interface AdminLayoutProps {
@@ -21,15 +22,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   activeTab,
   setActiveTab
 }) => {
-  const [kpis, setKpis] = useState(qcService.getKPIs());
+  const [kpis, setKpis] = useState<DashboardKPI>({ totalJobs: 0, inProgress: 0, completed: 0, failed: 0, passRate: 100, todayCount: 0 });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = qcService.subscribe(() => {
-      setKpis(qcService.getKPIs());
-    });
-    return unsubscribe;
+    void adminApi.getKpis().then(setKpis).catch(() => undefined);
   }, []);
 
   const navItems = [

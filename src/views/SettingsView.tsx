@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { KeyRound, Building2, RefreshCw, FileText, Check } from 'lucide-react';
+import { KeyRound, Building2, FileText, Check } from 'lucide-react';
+import { getAdminApiKey, setAdminApiKey } from '../services/adminApi';
 
 export const SettingsView: React.FC = () => {
   const [factoryName, setFactoryName] = useState('NHÀ MÁY SẢN XUẤT ĐIỆN TỬ & THIẾT BỊ THÔNG MINH');
@@ -7,21 +8,14 @@ export const SettingsView: React.FC = () => {
   const [defaultWidth, setDefaultWidth] = useState(60);
   const [defaultHeight, setDefaultHeight] = useState(45);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(30);
-  const [adminApiKey, setAdminApiKey] = useState(() => localStorage.getItem('qc_admin_api_key') || '');
+  const [adminApiKeyValue, setAdminApiKeyValue] = useState(() => getAdminApiKey());
   const [isSaved, setIsSaved] = useState(false);
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('qc_admin_api_key', adminApiKey.trim());
+    setAdminApiKey(adminApiKeyValue);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
-  };
-
-  const handleResetData = () => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa cache local trên trình duyệt này? Dữ liệu server PostgreSQL không bị ảnh hưởng.')) {
-      ['qc_admin_templates_v2', 'qc_admin_jobs_v2', 'qc_admin_logs_v2'].forEach((key) => localStorage.removeItem(key));
-      window.location.reload();
-    }
   };
 
   return (
@@ -83,13 +77,13 @@ export const SettingsView: React.FC = () => {
             </label>
             <input
               type="password"
-              value={adminApiKey}
-              onChange={(e) => setAdminApiKey(e.target.value)}
+              value={adminApiKeyValue}
+              onChange={(e) => setAdminApiKeyValue(e.target.value)}
               placeholder="Nhập QC_ADMIN_API_KEY để tải lệnh và xuất URL session"
               className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
             <p className="text-[11px] text-slate-500 mt-1">
-              Key này lưu trong trình duyệt để verify nội bộ. Production cần thay bằng đăng nhập/RBAC trước khi public.
+              Key chỉ giữ trong memory của phiên UI hiện tại, không ghi browser storage. Refresh trang thì cần nhập lại nếu build không có VITE_QC_ADMIN_API_KEY.
             </p>
           </div>
         </div>
@@ -150,16 +144,7 @@ export const SettingsView: React.FC = () => {
         </div>
 
         {/* Save & Reset Actions */}
-        <div className="flex items-center justify-between pt-4">
-          <button
-            type="button"
-            onClick={handleResetData}
-            className="px-4 py-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-colors flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Xóa Cache Local Của Trình Duyệt</span>
-          </button>
-
+        <div className="flex items-center justify-end pt-4">
           <button
             type="submit"
             className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md transition-all flex items-center gap-2"

@@ -1,4 +1,4 @@
-import { ChecklistTemplate, InspectionJob } from '../types/qc';
+import { AuditLogEntry, ChecklistTemplate, DashboardKPI, InspectionJob } from '../types/qc';
 import { mapInspectionJob } from './workerSessionApi';
 
 interface CreateJobPayload {
@@ -21,11 +21,19 @@ interface AdminApiOptions {
   pathname?: string;
 }
 
-function getDefaultAdminKey() {
+let inMemoryAdminKey = '';
+
+export function setAdminApiKey(key: string) {
+  inMemoryAdminKey = key.trim();
+}
+
+export function getAdminApiKey() {
   const meta = import.meta as ImportMeta & { env?: Record<string, string | undefined> };
-  const envKey = meta.env?.VITE_QC_ADMIN_API_KEY;
-  const storedKey = typeof localStorage === 'undefined' ? '' : localStorage.getItem('qc_admin_api_key');
-  return envKey || storedKey || '';
+  return meta.env?.VITE_QC_ADMIN_API_KEY || inMemoryAdminKey;
+}
+
+function getDefaultAdminKey() {
+  return getAdminApiKey();
 }
 
 async function parseJson(response: Response) {
@@ -85,6 +93,18 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       return (payload || []).map(mapInspectionJob);
     },
 
+    async getKpis(): Promise<DashboardKPI> {
+      return await expectOk(await fetchImpl('/api/admin/kpis', {
+        headers: headers(),
+      }));
+    },
+
+    async listAuditLogs(): Promise<AuditLogEntry[]> {
+      return await expectOk(await fetchImpl('/api/admin/audit-events', {
+        headers: headers(),
+      })) || [];
+    },
+
     async createJob(payload: CreateJobPayload): Promise<InspectionJob> {
       const row = await expectOk(await fetchImpl('/api/admin/jobs', {
         method: 'POST',
@@ -107,6 +127,33 @@ export function createAdminApi(options: AdminApiOptions = {}) {
         token: payload.token,
         isExpired: false,
       };
+    },
+
+    async updateJobStatus(jobId: string, status: InspectionJob['status'], adminNotes?: string): Promise<InspectionJob> {
+      const row = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/status`, {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ status, adminNotes }),
+      }));
+      return mapInspectionJob(row);
+    },
+
+    async updateJobStepNote(jobId: string, stepId: string, note: string): Promise<InspectionJob> {
+      const row = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/step-results/${encodeURIComponent(stepId)}/note`, {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ note }),
+      }));
+      return mapInspectionJob(row);
+    },
+
+    async recordExport(jobId: string): Promise<InspectionJob> {
+      const row = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/exports`, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify({ format: 'docx' }),
+      }));
+      return mapInspectionJob(row);
     },
   };
 }
