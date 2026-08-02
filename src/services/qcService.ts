@@ -386,6 +386,69 @@ class QCService {
     return { success: true, message: 'Nộp kết quả kiểm tra thành công!', job };
   }
 
+  // --- CREATE NEW INSPECTION JOB ---
+  public createJob(jobData: {
+    batchNumber: string;
+    templateId: string;
+    productCode?: string;
+    productName?: string;
+    workerName?: string;
+    workerId?: string;
+    line?: string;
+    shift?: string;
+    notes?: string;
+    adminName?: string;
+  }): InspectionJob {
+    this.loadFromStorage();
+    const template = this.getTemplateById(jobData.templateId) || this.templates[0] || INITIAL_TEMPLATES[0];
+
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const randomSuffix = Math.floor(100 + Math.random() * 900);
+    const newJobId = `JOB-${dateStr}-${randomSuffix}`;
+
+    const newJob: InspectionJob = {
+      id: newJobId,
+      batchNumber: jobData.batchNumber || `BATCH-VN-${dateStr}-${randomSuffix}`,
+      productCode: jobData.productCode || template.productCode,
+      productName: jobData.productName || template.productName,
+      templateId: template.id,
+      status: 'IN_PROGRESS',
+      workerName: jobData.workerName || 'Chưa phân công',
+      workerId: jobData.workerId,
+      line: jobData.line || 'Chuyền 01',
+      shift: jobData.shift || 'Ca Sáng (06:00 - 14:00)',
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      adminNotes: jobData.notes,
+      exportCount: 0,
+      stepResults: template.steps.map(step => ({
+        stepId: step.stepId,
+        status: 'PASS',
+        note: 'Chờ công nhân kiểm tra và tải ảnh thực tế...',
+        photoUrl: '',
+        timestamp: now.toISOString()
+      }))
+    };
+
+    this.jobs.unshift(newJob);
+
+    const auditLog: AuditLogEntry = {
+      id: `LOG-${Date.now()}`,
+      jobId: newJobId,
+      adminName: jobData.adminName || 'QC Admin',
+      action: `Tạo Lệnh Kiểm Tra Mới [Lô: ${newJob.batchNumber}]`,
+      fieldChanged: 'Job Creation',
+      oldValue: 'N/A',
+      newValue: 'IN_PROGRESS',
+      timestamp: now.toISOString().replace('T', ' ').slice(0, 19)
+    };
+    this.logs.unshift(auditLog);
+
+    this.saveToStorage();
+    return newJob;
+  }
+
   // --- WORKER SIMULATION ---
   public simulateWorkerSubmission(): InspectionJob {
     const template = this.templates[0] || INITIAL_TEMPLATES[0];
