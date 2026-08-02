@@ -1,5 +1,18 @@
-import { InspectionJob } from '../types/qc';
+import { ChecklistTemplate, InspectionJob } from '../types/qc';
 import { mapInspectionJob } from './workerSessionApi';
+
+interface CreateJobPayload {
+  externalId: string;
+  batchNumber: string;
+  productCode: string;
+  productName: string;
+  templateId: string;
+  templateSnapshot: ChecklistTemplate;
+  workerId?: string;
+  workerName?: string;
+  shift?: string;
+  line?: string;
+}
 
 interface AdminApiOptions {
   adminKey?: string;
@@ -36,11 +49,49 @@ export function createAdminApi(options: AdminApiOptions = {}) {
   });
 
   return {
+    async listTemplates(): Promise<ChecklistTemplate[]> {
+      return await expectOk(await fetchImpl('/api/admin/templates', {
+        headers: headers(),
+      })) || [];
+    },
+
+    async saveTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {
+      return await expectOk(await fetchImpl('/api/admin/templates', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(template),
+      }));
+    },
+
+    async updateTemplate(template: ChecklistTemplate): Promise<ChecklistTemplate> {
+      return await expectOk(await fetchImpl(`/api/admin/templates/${encodeURIComponent(template.id)}`, {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify(template),
+      }));
+    },
+
+    async deleteTemplate(templateId: string): Promise<void> {
+      await expectOk(await fetchImpl(`/api/admin/templates/${encodeURIComponent(templateId)}`, {
+        method: 'DELETE',
+        headers: headers(),
+      }));
+    },
+
     async listJobs(): Promise<InspectionJob[]> {
       const payload = await expectOk(await fetchImpl('/api/admin/jobs', {
         headers: headers(),
       }));
       return (payload || []).map(mapInspectionJob);
+    },
+
+    async createJob(payload: CreateJobPayload): Promise<InspectionJob> {
+      const row = await expectOk(await fetchImpl('/api/admin/jobs', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(payload),
+      }));
+      return mapInspectionJob(row);
     },
 
     async createWorkerSession(jobId: string): Promise<{ sessionUrl: string; expiresAt: string; token: string; isExpired: boolean }> {

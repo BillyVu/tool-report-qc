@@ -11,6 +11,7 @@ import { imageUploadFilter } from './uploads.js';
 import { enqueuePhotoProcessing } from './outbox.js';
 import { enqueueGeminiAnalysis } from './geminiOutbox.js';
 import { toJsonbParam } from './jsonParam.js';
+import { serializeTemplateRow, templateDbParams } from './templates.js';
 
 const port = Number(process.env.PORT || 3000);
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
@@ -99,6 +100,63 @@ app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
   );
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_CREATED')`, [job.rows[0].id]);
   res.status(201).json(job.rows[0]);
+});
+
+app.get('/api/admin/templates', requireAdmin, async (_req, res) => {
+  const templates = await db.query(
+    `SELECT external_id, title, product_code, product_name, version, definition, created_at, updated_at
+       FROM templates
+      ORDER BY updated_at DESC, created_at DESC`,
+  );
+  res.json(templates.rows.map(serializeTemplateRow));
+});
+
+app.post('/api/admin/templates', requireAdmin, async (req, res) => {
+  let params;
+  try {
+    params = templateDbParams(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid template payload.' });
+  }
+  try {
+    const result = await db.query(
+      `INSERT INTO templates (external_id, title, product_code, product_name, version, definition)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING external_id, title, product_code, product_name, version, definition, created_at, updated_at`,
+      [params.externalId, params.title, params.productCode, params.productName, params.version, params.definitionJson],
+    );
+    await db.query(`INSERT INTO audit_events (actor_type, actor_label, action, payload) VALUES ('ADMIN', 'QC Admin', 'TEMPLATE_CREATED', $1)`, [toJsonbParam({ templateId: params.externalId })]);
+    res.status(201).json(serializeTemplateRow(result.rows[0]));
+  } catch (error: any) {
+    if (error?.code === '23505') return res.status(409).json({ error: 'Template id already exists.' });
+    throw error;
+  }
+});
+
+app.put('/api/admin/templates/:templateId', requireAdmin, async (req, res) => {
+  let params;
+  try {
+    params = templateDbParams(req.body, req.params.templateId);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid template payload.' });
+  }
+  const result = await db.query(
+    `UPDATE templates
+        SET title = $2, product_code = $3, product_name = $4, version = $5, definition = $6, updated_at = now()
+      WHERE external_id = $1
+      RETURNING external_id, title, product_code, product_name, version, definition, created_at, updated_at`,
+    [params.externalId, params.title, params.productCode, params.productName, params.version, params.definitionJson],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Template not found.' });
+  await db.query(`INSERT INTO audit_events (actor_type, actor_label, action, payload) VALUES ('ADMIN', 'QC Admin', 'TEMPLATE_UPDATED', $1)`, [toJsonbParam({ templateId: params.externalId })]);
+  res.json(serializeTemplateRow(result.rows[0]));
+});
+
+app.delete('/api/admin/templates/:templateId', requireAdmin, async (req, res) => {
+  const result = await db.query(`DELETE FROM templates WHERE external_id = $1 RETURNING external_id`, [req.params.templateId]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Template not found.' });
+  await db.query(`INSERT INTO audit_events (actor_type, actor_label, action, payload) VALUES ('ADMIN', 'QC Admin', 'TEMPLATE_DELETED', $1)`, [toJsonbParam({ templateId: req.params.templateId })]);
+  res.status(204).end();
 });
 
 app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {

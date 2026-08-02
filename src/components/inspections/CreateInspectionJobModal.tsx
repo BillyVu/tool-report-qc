@@ -14,7 +14,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { ChecklistTemplate, InspectionJob } from '../../types/qc';
-import { qcService } from '../../services/qcService';
+import { adminApi } from '../../services/adminApi';
 
 interface CreateInspectionJobModalProps {
   isOpen: boolean;
@@ -29,6 +29,9 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
 }) => {
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   
   // Form fields
   const [batchNumber, setBatchNumber] = useState('');
@@ -46,13 +49,23 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
 
   useEffect(() => {
     if (isOpen) {
-      const tmpls = qcService.getTemplates();
-      setTemplates(tmpls);
-      if (tmpls.length > 0) {
-        setSelectedTemplateId(tmpls[0].id);
-        setProductCode(tmpls[0].productCode);
-        setProductName(tmpls[0].productName);
-      }
+      setIsLoadingTemplates(true);
+      setErrorMessage('');
+      adminApi.listTemplates()
+        .then((tmpls) => {
+          setTemplates(tmpls);
+          if (tmpls.length > 0) {
+            setSelectedTemplateId(tmpls[0].id);
+            setProductCode(tmpls[0].productCode);
+            setProductName(tmpls[0].productName);
+          } else {
+            setSelectedTemplateId('');
+            setProductCode('');
+            setProductName('');
+          }
+        })
+        .catch((error) => setErrorMessage(error instanceof Error ? error.message : 'Không tải được mẫu checklist từ database.'))
+        .finally(() => setIsLoadingTemplates(false));
       
       // Auto-generate a default Batch Number
       const randomId = Math.floor(1000 + Math.random() * 9000);
@@ -86,29 +99,37 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
       return;
     }
 
-    const newJob = qcService.createJob({
-      batchNumber: batchNumber.trim(),
-      templateId: selectedTemplateId,
-      productCode: productCode.trim(),
-      productName: productName.trim(),
-      workerName: workerName.trim() || 'Công nhân QC',
-      line,
-      shift,
-      notes: notes.trim()
-    });
-
-    // Auto generate 24h session URL
-    try {
-      const res = qcService.generateJobSessionUrl(newJob.id);
-      setSessionUrl(res.sessionUrl);
-    } catch (err) {
-      console.error('Session URL generation error:', err);
-    }
-
-    setCreatedJob(newJob);
-    if (onJobCreated) {
-      onJobCreated(newJob);
-    }
+    void (async () => {
+      setIsSubmitting(true);
+      setErrorMessage('');
+      try {
+        const selectedTemplate = templates.find((tmpl) => tmpl.id === selectedTemplateId);
+        if (!selectedTemplate) throw new Error('Mẫu checklist không tồn tại trong database.');
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+        const randomSuffix = Math.floor(100 + Math.random() * 900);
+        const newJobId = `JOB-${dateStr}-${randomSuffix}`;
+        const newJob = await adminApi.createJob({
+          externalId: newJobId,
+          batchNumber: batchNumber.trim(),
+          templateId: selectedTemplate.id,
+          templateSnapshot: selectedTemplate,
+          productCode: productCode.trim() || selectedTemplate.productCode,
+          productName: productName.trim() || selectedTemplate.productName,
+          workerName: workerName.trim() || 'Công nhân QC',
+          line,
+          shift,
+        });
+        const res = await adminApi.createWorkerSession(newJob.id);
+        setSessionUrl(res.sessionUrl);
+        setCreatedJob(newJob);
+        if (onJobCreated) onJobCreated(newJob);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Không tạo được lệnh kiểm tra trong database.');
+      } finally {
+        setIsSubmitting(false);
+      }
+    })();
   };
 
   const handleCopyLink = () => {
@@ -147,6 +168,11 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
         {/* Content Body */}
         {!createdJob ? (
           <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+            {errorMessage && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl p-3">
+                {errorMessage}. Kiểm tra Admin API Key trong mục Cài đặt.
+              </div>
+            )}
             
             {/* Template Selector */}
             <div>
@@ -157,8 +183,11 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
                 value={selectedTemplateId}
                 onChange={(e) => handleTemplateChange(e.target.value)}
                 required
+                disabled={isLoadingTemplates}
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
               >
+                {isLoadingTemplates && <option value="">Đang tải mẫu từ database...</option>}
+                {!isLoadingTemplates && templates.length === 0 && <option value="">Chưa có mẫu checklist trong database</option>}
                 {templates.map(tmpl => (
                   <option key={tmpl.id} value={tmpl.id}>
                     {tmpl.title} ({tmpl.productCode} - v{tmpl.version})
@@ -282,10 +311,11 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2"
+                disabled={isSubmitting || isLoadingTemplates || templates.length === 0}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2"
               >
                 <ClipboardCheck className="w-4 h-4" />
-                <span>Khởi Tạo Lệnh Kiểm Tra</span>
+                <span>{isSubmitting ? 'Đang lưu database...' : 'Khởi Tạo Lệnh Kiểm Tra'}</span>
               </button>
             </div>
           </form>

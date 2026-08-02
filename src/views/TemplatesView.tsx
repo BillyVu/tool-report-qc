@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { 
+import React, { useEffect, useState } from 'react';
+import {
   FileCheck2, 
   Plus, 
   Copy, 
@@ -14,13 +14,15 @@ import {
   Eye
 } from 'lucide-react';
 import { ChecklistTemplate } from '../types/qc';
-import { qcService } from '../services/qcService';
+import { adminApi } from '../services/adminApi';
 import { TemplateFormModal } from '../components/templates/TemplateFormModal';
 import { TemplatePreviewModal } from '../components/templates/TemplatePreviewModal';
 
 export const TemplatesView: React.FC = () => {
-  const [templates, setTemplates] = useState<ChecklistTemplate[]>(qcService.getTemplates());
+  const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
   
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -30,9 +32,22 @@ export const TemplatesView: React.FC = () => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<ChecklistTemplate | null>(null);
 
-  const reloadTemplates = () => {
-    setTemplates(qcService.getTemplates());
+  const reloadTemplates = async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+    try {
+      setTemplates(await adminApi.listTemplates());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Không tải được mẫu checklist từ database.';
+      setErrorMessage(message);
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    void reloadTemplates();
+  }, []);
 
   const handlePreview = (tmpl: ChecklistTemplate) => {
     setPreviewTemplate(tmpl);
@@ -49,21 +64,40 @@ export const TemplatesView: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleDuplicate = (tmpl: ChecklistTemplate) => {
-    qcService.duplicateTemplate(tmpl.id);
-    reloadTemplates();
-  };
-
-  const handleDelete = (id: string) => {
-    if (window.confirm('Bạn có chắc chắn muốn xóa Mẫu Checklist này?')) {
-      qcService.deleteTemplate(id);
-      reloadTemplates();
+  const handleDuplicate = async (tmpl: ChecklistTemplate) => {
+    const duplicated: ChecklistTemplate = {
+      ...tmpl,
+      id: `TMPL-${Date.now().toString().slice(-6)}`,
+      title: `${tmpl.title} (Bản sao)`,
+      createdAt: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await adminApi.saveTemplate(duplicated);
+      await reloadTemplates();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không nhân bản được mẫu checklist.');
     }
   };
 
-  const handleSaveTemplate = (saved: ChecklistTemplate) => {
-    qcService.saveTemplate(saved);
-    reloadTemplates();
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Bạn có chắc chắn muốn xóa Mẫu Checklist này?')) {
+      try {
+        await adminApi.deleteTemplate(id);
+        await reloadTemplates();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Không xóa được mẫu checklist.');
+      }
+    }
+  };
+
+  const handleSaveTemplate = async (saved: ChecklistTemplate) => {
+    if (selectedTemplate) {
+      await adminApi.updateTemplate(saved);
+    } else {
+      await adminApi.saveTemplate(saved);
+    }
+    await reloadTemplates();
   };
 
   const filteredTemplates = templates.filter(t => 
@@ -111,7 +145,27 @@ export const TemplatesView: React.FC = () => {
         </div>
       </div>
 
+      {errorMessage && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl p-4">
+          Không thể đồng bộ database: {errorMessage}. Kiểm tra Admin API Key trong mục Cài đặt.
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 text-sm text-slate-500">
+          Đang tải mẫu checklist từ database...
+        </div>
+      )}
+
       {/* Templates Grid List */}
+      {!isLoading && filteredTemplates.length === 0 && !errorMessage && (
+        <div className="bg-white border border-dashed border-slate-300 rounded-xl p-8 text-center">
+          <FileCheck2 className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm font-bold text-slate-700">Chưa có mẫu checklist trong database</p>
+          <p className="text-xs text-slate-500 mt-1">Bấm “Tạo Mẫu QC Mới” để tạo mẫu đầu tiên.</p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {filteredTemplates.map((tmpl) => (
           <div

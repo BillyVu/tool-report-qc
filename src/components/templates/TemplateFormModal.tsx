@@ -9,7 +9,7 @@ interface TemplateFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   template: ChecklistTemplate | null;
-  onSave: (template: ChecklistTemplate) => void;
+  onSave: (template: ChecklistTemplate) => Promise<void> | void;
 }
 
 export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
@@ -27,6 +27,8 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   const [productName, setProductName] = useState(template?.productName || '');
   const [docxTemplateName, setDocxTemplateName] = useState(template?.docxTemplateName || 'Mau_Bao_Cao_QC_Chuan.docx');
   const [version, setVersion] = useState(template?.version || '1.0.0');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const [steps, setSteps] = useState<InspectionStep[]>(
     template?.steps || [
@@ -253,9 +255,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
     });
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (!title.trim() || !productCode.trim()) return;
+    setIsSaving(true);
+    setSaveError('');
 
     const savedTemplate: ChecklistTemplate = {
       id: template?.id || `TMPL-${Date.now().toString().slice(-6)}`,
@@ -268,8 +272,14 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
       steps
     };
 
-    onSave(savedTemplate);
-    onClose();
+    try {
+      await onSave(savedTemplate);
+      onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Không lưu được mẫu checklist vào database.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const activeStep = activeMappingStepIndex !== null ? steps[activeMappingStepIndex] : null;
@@ -308,6 +318,12 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
           {/* Form Content */}
           <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
+            {saveError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-3">
+                {saveError}
+              </div>
+            )}
+
             {/* Template Basic Info */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
               <div className="md:col-span-2">
@@ -445,10 +461,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
               <button
                 type="button"
                 onClick={handleFormSubmit}
-                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+                disabled={isSaving}
+                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
               >
                 <Check className="w-4 h-4" />
-                <span>{isEdit ? 'Cập Nhật Mẫu Checklist' : 'Tạo Mẫu Mới'}</span>
+                <span>{isSaving ? 'Đang lưu database...' : isEdit ? 'Cập Nhật Mẫu Checklist' : 'Tạo Mẫu Mới'}</span>
               </button>
             </div>
           </div>
