@@ -37,9 +37,9 @@ Luồng deploy:
 
 1. GitHub Actions chạy `npm ci`, `npm test`, `npm run lint`, `npm run build`, `docker compose config`.
 2. Nếu verify pass, workflow SSH vào VPS.
-3. VPS fetch code mới, checkout đúng commit `${GITHUB_SHA}`.
+3. GitHub Actions đóng gói source của đúng commit `${GITHUB_SHA}` và copy archive qua SSH.
 4. VPS giữ nguyên `.env`, PostgreSQL volume, RabbitMQ volume và `/srv/tool-report-qc/uploads`.
-5. Chạy `docker compose up -d --build`.
+5. VPS giải nén source vào `/opt/tool-report-qc` và chạy `docker compose -p tool-report-qc up -d --build`.
 6. Health check `http://127.0.0.1:3020/api/health`.
 
 Repository secrets cần tạo trong GitHub:
@@ -56,18 +56,16 @@ VPS_KNOWN_HOSTS=<output cua ssh-keyscan>
 Tạo deploy key:
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/tool-report-qc-github-actions -C "github-actions tool-report-qc"
-ssh-copy-id -i ~/.ssh/tool-report-qc-github-actions.pub root@36.50.176.196
-ssh-keyscan -p 22 36.50.176.196
+ssh-keygen -t ed25519 -f /Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/github-actions-vps-deploy-key -C "tool-report-qc-github-actions"
+ssh-copy-id -i /Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/github-actions-vps-deploy-key.pub root@36.50.176.196
+ssh-keyscan -p 22 36.50.176.196 > /Users/apexdev/Desktop/bot-Dung/.secrets/tool-report-qc/vps_known_hosts
 ```
 
 Trên VPS, chuẩn bị thư mục app một lần:
 
 ```bash
 mkdir -p /opt/tool-report-qc /srv/tool-report-qc/uploads
-cd /opt/tool-report-qc
-git clone git@github.com:BillyVu/tool-report-qc.git .
-cp .env.vps.example .env
+# tao /opt/tool-report-qc/.env tu .env.vps.example
 # dien POSTGRES_PASSWORD, QC_ADMIN_API_KEY, RABBITMQ_PASSWORD, GEMINI_API_KEY
 ```
 
