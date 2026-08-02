@@ -1,4 +1,5 @@
 import { AuditLogEntry, ChecklistTemplate, DashboardKPI, InspectionJob } from '../types/qc';
+import { loadStoredAdminApiKey, saveStoredAdminApiKey } from './adminAuth';
 import { mapInspectionJob } from './workerSessionApi';
 
 interface CreateJobPayload {
@@ -23,13 +24,13 @@ interface AdminApiOptions {
 
 let inMemoryAdminKey = '';
 
-export function setAdminApiKey(key: string) {
-  inMemoryAdminKey = key.trim();
+export function setAdminApiKey(key: string, options: { persist?: boolean } = {}) {
+  inMemoryAdminKey = options.persist ? saveStoredAdminApiKey(key) : key.trim();
 }
 
 export function getAdminApiKey() {
   const meta = import.meta as ImportMeta & { env?: Record<string, string | undefined> };
-  return meta.env?.VITE_QC_ADMIN_API_KEY || inMemoryAdminKey;
+  return inMemoryAdminKey || loadStoredAdminApiKey() || meta.env?.VITE_QC_ADMIN_API_KEY || '';
 }
 
 function getDefaultAdminKey() {

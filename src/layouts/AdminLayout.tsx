@@ -5,7 +5,8 @@ import {
   ClipboardCheck, 
   History, 
   Settings, 
-  Plus
+  Plus,
+  LogOut
 } from 'lucide-react';
 import { DashboardKPI } from '../types/qc';
 import { adminApi } from '../services/adminApi';
@@ -15,12 +16,14 @@ interface AdminLayoutProps {
   children: React.ReactNode;
   activeTab: 'dashboard' | 'templates' | 'inspections' | 'audit' | 'settings';
   setActiveTab: (tab: 'dashboard' | 'templates' | 'inspections' | 'audit' | 'settings') => void;
+  onLogout: () => void;
 }
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({
   children,
   activeTab,
-  setActiveTab
+  setActiveTab,
+  onLogout
 }) => {
   const [kpis, setKpis] = useState<DashboardKPI>({ totalJobs: 0, inProgress: 0, completed: 0, failed: 0, passRate: 100, todayCount: 0 });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -111,7 +114,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         </nav>
 
         {/* User Profile Footer */}
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-slate-800 space-y-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white font-bold border border-slate-600">
               QA
@@ -121,6 +124,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               <p className="text-[10px] text-slate-500 uppercase tracking-wider">Quản trị viên QC</p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={onLogout}
+            className="w-full flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Đăng xuất</span>
+          </button>
         </div>
       </aside>
 

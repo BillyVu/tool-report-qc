@@ -2,7 +2,11 @@ import React, { useState } from 'react';
 import { KeyRound, Building2, FileText, Check } from 'lucide-react';
 import { getAdminApiKey, setAdminApiKey } from '../services/adminApi';
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  onAuthUpdated?: () => void;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => {
   const [factoryName, setFactoryName] = useState('NHÀ MÁY SẢN XUẤT ĐIỆN TỬ & THIẾT BỊ THÔNG MINH');
   const [department, setDepartment] = useState('BỘ PHẬN PHÁT TRIỂN & QUẢN LÝ CHẤT LƯỢNG (QA/QC)');
   const [defaultWidth, setDefaultWidth] = useState(60);
@@ -13,7 +17,8 @@ export const SettingsView: React.FC = () => {
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
-    setAdminApiKey(adminApiKeyValue);
+    setAdminApiKey(adminApiKeyValue, { persist: true });
+    onAuthUpdated?.();
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
   };
@@ -83,7 +88,7 @@ export const SettingsView: React.FC = () => {
               className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
             <p className="text-[11px] text-slate-500 mt-1">
-              Key chỉ giữ trong memory của phiên UI hiện tại, không ghi browser storage. Refresh trang thì cần nhập lại nếu build không có VITE_QC_ADMIN_API_KEY.
+              Key sẽ được lưu trên trình duyệt của thiết bị này để lần sau không cần đăng nhập lại. Nếu đổi mật khẩu trên VPS, cập nhật lại key ở đây.
             </p>
           </div>
         </div>
