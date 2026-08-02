@@ -12,6 +12,7 @@ import { enqueuePhotoProcessing } from './outbox.js';
 import { enqueueGeminiAnalysis } from './geminiOutbox.js';
 import { toJsonbParam } from './jsonParam.js';
 import { serializeTemplateRow, templateDbParams } from './templates.js';
+import { buildInitialStepResults, updateJobStatusSql } from './adminJobs.js';
 
 const port = Number(process.env.PORT || 3000);
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
@@ -93,10 +94,23 @@ app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
   if (![externalId, batchNumber, productCode, productName, templateSnapshot].every(Boolean)) {
     return res.status(400).json({ error: 'externalId, batchNumber, productCode, productName, and templateSnapshot are required.' });
   }
+  const stepResults = buildInitialStepResults(templateSnapshot);
   const job = await db.query(
-    `INSERT INTO inspection_jobs (external_id, batch_number, product_code, product_name, template_id, template_snapshot, worker_id, worker_name, shift, line)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [externalId, batchNumber, productCode, productName, templateId || null, toJsonbParam(templateSnapshot), workerId || null, workerName || null, shift || null, line || null],
+    `INSERT INTO inspection_jobs (external_id, batch_number, product_code, product_name, template_id, template_snapshot, step_results, worker_id, worker_name, shift, line)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    [
+      externalId,
+      batchNumber,
+      productCode,
+      productName,
+      templateId || null,
+      toJsonbParam(templateSnapshot),
+      toJsonbParam(stepResults),
+      workerId || null,
+      workerName || null,
+      shift || null,
+      line || null,
+    ],
   );
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_CREATED')`, [job.rows[0].id]);
   res.status(201).json(job.rows[0]);
@@ -216,14 +230,7 @@ app.patch('/api/admin/jobs/:jobId/status', requireAdmin, async (req, res) => {
   const { status, adminNotes } = req.body;
   if (!['IN_PROGRESS', 'COMPLETED', 'FAILED'].includes(status)) return res.status(400).json({ error: 'A valid status is required.' });
   const result = await db.query(
-    `UPDATE inspection_jobs
-        SET status = $2,
-            admin_notes = COALESCE($3, admin_notes),
-            completed_at = CASE WHEN $2 = 'COMPLETED' THEN COALESCE(completed_at, now()) ELSE completed_at END,
-            updated_at = now(),
-            version = version + 1
-      WHERE external_id = $1
-      RETURNING *`,
+    updateJobStatusSql,
     [req.params.jobId, status, adminNotes ?? null],
   );
   if (!result.rowCount) return res.status(404).json({ error: 'Job not found.' });
@@ -363,7 +370,7 @@ app.post('/api/worker-sessions/:jobId/submit', workerSessionGuard, async (req, r
   const status = failed ? 'FAILED' : 'COMPLETED';
   const job = await db.query(
     `UPDATE inspection_jobs
-        SET step_results = $1, status = $2, completed_at = now(),
+        SET step_results = $1, status = $2::qc_job_status, completed_at = now(),
             worker_name = COALESCE($3, worker_name), worker_id = COALESCE($4, worker_id),
             shift = COALESCE($5, shift), line = COALESCE($6, line),
             updated_at = now(), version = version + 1
