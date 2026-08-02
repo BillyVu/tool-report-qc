@@ -7,3 +7,5 @@ coverage/
 .env*
 !.env.example
 !.env.vps.example
+assets/X530  Knobs_Inspection Report 100-70-260722-117pcs_ATT.docx
+package-lock.json

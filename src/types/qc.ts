@@ -57,6 +57,20 @@ export interface ChecklistTemplate {
   version: string;
   createdAt?: string;
   updatedAt: string;
+  clientName?: string;
+  supplierName?: string;
+  supplierLocation?: string;
+  supplierContact?: string;
+  serviceRequired?: string;
+  aqlStandard?: string;
+  inspectionLevel?: string;
+  orderQty?: string;
+  cartonQty?: string;
+  cartonSpec?: string;
+  deviceSpec?: string;
+  systemVersion?: string;
+  hardwareVersion?: string;
+  buildNumber?: string;
   steps: InspectionStep[];
 }
 
