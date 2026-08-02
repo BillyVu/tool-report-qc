@@ -78,7 +78,21 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
     version: version || '1.0.0',
     steps: steps,
     createdAt: template?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    clientName,
+    supplierName,
+    supplierLocation,
+    supplierContact,
+    serviceRequired,
+    aqlStandard,
+    inspectionLevel,
+    orderQty,
+    cartonQty,
+    cartonSpec,
+    deviceSpec,
+    systemVersion,
+    hardwareVersion,
+    buildNumber
   };
 
   const handleAddStep = () => {
