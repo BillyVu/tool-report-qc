@@ -44,6 +44,21 @@ export interface ChecklistTemplate {
   docxTemplateName: string;
   version: string;
   updatedAt: string;
+  // Các thông tin mở rộng từ file kiểm định thực tế (Ví dụ: X530 Report)
+  clientName?: string;
+  supplierName?: string;
+  supplierLocation?: string;
+  supplierContact?: string;
+  serviceRequired?: string;
+  aqlStandard?: string;
+  inspectionLevel?: string;
+  orderQty?: string;
+  cartonQty?: string;
+  cartonSpec?: string;
+  deviceSpec?: string;
+  systemVersion?: string;
+  hardwareVersion?: string;
+  buildNumber?: string;
   steps: InspectionStep[];
 }
 

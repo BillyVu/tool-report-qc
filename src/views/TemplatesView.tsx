@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
-import { 
-  FileCheck2, 
-  Plus, 
-  Copy, 
-  Edit3, 
-  Trash2, 
-  FileCode, 
-  Layers, 
-  Search, 
-  Check, 
+import {
+  FileCheck2,
+  Plus,
+  Copy,
+  Edit3,
+  Trash2,
+  FileCode,
+  Layers,
+  Search,
+  Check,
   Tag,
   ArrowUpDown
 } from 'lucide-react';
@@ -19,7 +19,7 @@ import { TemplateFormModal } from '../components/templates/TemplateFormModal';
 export const TemplatesView: React.FC = () => {
   const [templates, setTemplates] = useState<ChecklistTemplate[]>(qcService.getTemplates());
   const [searchTerm, setSearchTerm] = useState('');
-  
+
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ChecklistTemplate | null>(null);
@@ -55,7 +55,7 @@ export const TemplatesView: React.FC = () => {
     reloadTemplates();
   };
 
-  const filteredTemplates = templates.filter(t => 
+  const filteredTemplates = templates.filter(t =>
     t.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     t.productCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
     t.docxTemplateName.toLowerCase().includes(searchTerm.toLowerCase())
@@ -109,30 +109,50 @@ export const TemplatesView: React.FC = () => {
           >
             <div className="space-y-3">
               {/* Header Badges */}
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <span className="font-mono text-[11px] font-bold bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
                   {tmpl.id}
                 </span>
-                <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
-                  Mã SP: {tmpl.productCode}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {tmpl.clientName && (
+                    <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                      Client: {tmpl.clientName}
+                    </span>
+                  )}
+                  <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
+                    Mã SP: {tmpl.productCode}
+                  </span>
+                </div>
               </div>
 
               {/* Title & Product Name */}
               <div>
                 <h3 className="font-bold text-base text-slate-900 line-clamp-1">{tmpl.title}</h3>
                 <p className="text-xs text-slate-500 mt-0.5">{tmpl.productName}</p>
+                {tmpl.supplierName && (
+                  <p className="text-[11px] text-slate-600 mt-1 flex items-center gap-1 truncate" title={tmpl.supplierName}>
+                    🏢 <span className="font-semibold">{tmpl.supplierName}</span>
+                  </p>
+                )}
               </div>
 
               {/* Word Template File Info */}
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs text-slate-700 font-medium">
-                  <FileCode className="w-4 h-4 text-blue-600 shrink-0" />
-                  <span className="truncate max-w-[200px]" title={tmpl.docxTemplateName}>
-                    {tmpl.docxTemplateName}
-                  </span>
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs text-slate-700 font-medium">
+                    <FileCode className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span className="truncate max-w-[200px]" title={tmpl.docxTemplateName}>
+                      {tmpl.docxTemplateName}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">v{tmpl.version}</span>
                 </div>
-                <span className="text-[10px] text-slate-400">v{tmpl.version}</span>
+                {tmpl.buildNumber && (
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-200/60 pt-1.5 font-mono">
+                    <span>Build: {tmpl.buildNumber}</span>
+                    <span>Đơn hàng: {tmpl.orderQty || '117 pcs'}</span>
+                  </div>
+                )}
               </div>
 
               {/* Steps & Mapped Placeholders Overview */}
