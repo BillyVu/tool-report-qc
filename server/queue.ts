@@ -8,6 +8,12 @@ export const GEMINI_RETRY_QUEUE = 'qc.gemini-analysis.retry';
 export const GEMINI_DEAD_LETTER_QUEUE = 'qc.gemini-analysis.dlq';
 const MAX_ATTEMPTS = 3;
 
+export interface RetryConnectionOptions {
+  label: string;
+  maxAttempts?: number;
+  delayMs?: number;
+}
+
 export interface PhotoProcessMessage {
   type: 'PHOTO_PROCESS';
   photoId: string;
@@ -43,6 +49,28 @@ export function nextRetry(message: PhotoProcessMessage): PhotoProcessMessage {
 
 export function canRetry(message: PhotoProcessMessage): boolean {
   return message.attempts < MAX_ATTEMPTS;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function retryConnection<T>(
+  operation: () => Promise<T>,
+  { label, maxAttempts = 12, delayMs = 5_000 }: RetryConnectionOptions,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) break;
+      console.warn(`${label} connection attempt ${attempt}/${maxAttempts} failed; retrying in ${delayMs}ms.`);
+      await delay(delayMs);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${label} connection failed`);
 }
 
 export async function createQueueChannel(url = process.env.RABBITMQ_URL): Promise<{ connection: ChannelModel; channel: ConfirmChannel }> {

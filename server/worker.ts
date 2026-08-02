@@ -1,10 +1,10 @@
 import 'dotenv/config';
 import { db } from './db.js';
 import { dispatchPendingJobs, markPhotoFailed, markPhotoProcessed } from './outbox.js';
-import { canRetry, createQueueChannel, nextRetry, parseJobMessage, PHOTO_DEAD_LETTER_QUEUE, PHOTO_RETRY_QUEUE, publishJob } from './queue.js';
+import { canRetry, createQueueChannel, nextRetry, parseJobMessage, PHOTO_DEAD_LETTER_QUEUE, PHOTO_RETRY_QUEUE, publishJob, retryConnection } from './queue.js';
 
 async function startWorker() {
-  const { connection, channel } = await createQueueChannel();
+  const { connection, channel } = await retryConnection(() => createQueueChannel(), { label: 'RabbitMQ photo worker' });
   await channel.prefetch(Number(process.env.WORKER_PREFETCH || 2));
 
   const dispatch = async () => {

@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import { db } from './db.js';
 import { dispatchPendingGeminiJobs } from './geminiOutbox.js';
 import { classifyGeminiError, retryDelayMs, shouldOpenCircuit } from './geminiPolicy.js';
-import { createGeminiQueueChannel, GEMINI_ANALYSIS_QUEUE, GEMINI_DEAD_LETTER_QUEUE, GEMINI_RETRY_QUEUE, parseGeminiMessage, publishGeminiJob } from './queue.js';
+import { createGeminiQueueChannel, GEMINI_ANALYSIS_QUEUE, GEMINI_DEAD_LETTER_QUEUE, GEMINI_RETRY_QUEUE, parseGeminiMessage, publishGeminiJob, retryConnection } from './queue.js';
 
 const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
@@ -54,7 +54,7 @@ async function scheduleRetry(analysisId: string, attempts: number, delayMs: numb
 
 async function startGeminiWorker() {
   if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is required');
-  const { connection, channel } = await createGeminiQueueChannel();
+  const { connection, channel } = await retryConnection(() => createGeminiQueueChannel(), { label: 'RabbitMQ Gemini worker' });
   await channel.prefetch(1);
   const dispatch = async () => { try { await dispatchPendingGeminiJobs(channel); } catch (error) { console.error('Gemini outbox dispatch failed', error); } };
   await dispatch();
