@@ -50,6 +50,9 @@ jobs:
     needs: verify
     environment: production
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Prepare SSH
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -62,6 +65,15 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+      - name: Package source
+        run: |
+          set -euo pipefail
+          tar -czf /tmp/tool-report-qc-${GITHUB_SHA}.tgz \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=dist \
+            .
+
       - name: Deploy selected commit
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -70,13 +82,19 @@ jobs:
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
         run: |
           set -euo pipefail
+          scp -i ~/.ssh/deploy_key -P "${VPS_PORT:-22}" \
+            /tmp/tool-report-qc-${GITHUB_SHA}.tgz \
+            "${VPS_USER}@${VPS_HOST}:/tmp/tool-report-qc-${GITHUB_SHA}.tgz"
           ssh -i ~/.ssh/deploy_key -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" \
             "set -euo pipefail
-             cd \"${VPS_APP_DIR}\"
-             git fetch origin main
-             git reset --hard \"${GITHUB_SHA}\"
-             test -f .env
+             test \"${VPS_APP_DIR}\" = \"/opt/tool-report-qc\"
              mkdir -p /srv/tool-report-qc/uploads
-             docker compose up -d --build
-             docker compose ps
+             mkdir -p \"${VPS_APP_DIR}\"
+             test -f \"${VPS_APP_DIR}/.env\"
+             find \"${VPS_APP_DIR}\" -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
+             tar -xzf /tmp/tool-report-qc-${GITHUB_SHA}.tgz -C \"${VPS_APP_DIR}\"
+             rm -f /tmp/tool-report-qc-${GITHUB_SHA}.tgz
+             cd \"${VPS_APP_DIR}\"
+             docker compose -p tool-report-qc up -d --build
+             docker compose -p tool-report-qc ps
              curl --fail http://127.0.0.1:3020/api/health"

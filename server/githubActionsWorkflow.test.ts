@@ -16,8 +16,11 @@ test('deploy workflow automatically deploys main commits to the VPS after verifi
   assert.match(workflow, /secrets\.VPS_SSH_KEY/);
   assert.match(workflow, /secrets\.VPS_HOST/);
   assert.match(workflow, /secrets\.VPS_APP_DIR/);
-  assert.match(workflow, /git reset --hard/);
+  assert.match(workflow, /tar -czf/);
+  assert.match(workflow, /scp -i ~\/\.ssh\/deploy_key/);
+  assert.match(workflow, /tar -xzf/);
   assert.match(workflow, /\$\{GITHUB_SHA\}/);
-  assert.match(workflow, /docker compose up -d --build/);
+  assert.doesNotMatch(workflow, /git reset --hard/);
+  assert.match(workflow, /docker compose -p tool-report-qc up -d --build/);
   assert.match(workflow, /curl --fail http:\/\/127\.0\.0\.1:3020\/api\/health/);
 });
