@@ -19,7 +19,9 @@ import {
   ChevronLeft, 
   ChevronRight, 
   ArrowUpDown,
-  RefreshCw
+  RefreshCw,
+  Share2,
+  Link
 } from 'lucide-react';
 import { InspectionJob, JobStatus } from '../../types/qc';
 import { generateDocxReport } from '../../services/docxExportService';
@@ -27,12 +29,14 @@ import { generateDocxReport } from '../../services/docxExportService';
 interface InspectionTableProps {
   jobs: InspectionJob[];
   onSelectJob: (job: InspectionJob) => void;
+  onExportSessionUrl?: (job: InspectionJob) => void;
   onRefreshData?: () => void;
 }
 
 export const InspectionTable: React.FC<InspectionTableProps> = ({
   jobs,
   onSelectJob,
+  onExportSessionUrl,
   onRefreshData
 }) => {
   const [globalFilter, setGlobalFilter] = useState('');
@@ -143,14 +147,29 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
       id: 'actions',
       header: () => <div className="text-right">Thao Tác</div>,
       cell: ({ row }) => (
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-1.5">
+          {onExportSessionUrl && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExportSessionUrl(row.original);
+              }}
+              className="px-2.5 py-1.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition-colors flex items-center gap-1 border border-blue-200"
+              title="Xuất Session URL độc lập cho công nhân (Hạn 24h)"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>Xuất Link (24h)</span>
+            </button>
+          )}
+
           <button
             onClick={() => onSelectJob(row.original)}
             className="px-2.5 py-1.5 rounded-md bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 text-xs font-semibold transition-colors flex items-center gap-1"
           >
             <Eye className="w-3.5 h-3.5" />
-            <span>Xem & Duyệt</span>
+            <span>Xem</span>
           </button>
+
           <button
             onClick={async (e) => {
               e.stopPropagation();

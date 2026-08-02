@@ -4,6 +4,7 @@ import { InspectionJob } from '../types/qc';
 import { qcService } from '../services/qcService';
 import { InspectionTable } from '../components/inspections/InspectionTable';
 import { InspectionDetailDrawer } from '../components/inspections/InspectionDetailDrawer';
+import { ExportJobSessionModal } from '../components/inspections/ExportJobSessionModal';
 
 interface InspectionsViewProps {
   selectedJobForReview: InspectionJob | null;
@@ -17,6 +18,10 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
   const [jobs, setJobs] = useState<InspectionJob[]>(qcService.getJobs());
   const [activeJob, setActiveJob] = useState<InspectionJob | null>(selectedJobForReview);
   const [isDrawerOpen, setIsDrawerOpen] = useState(!!selectedJobForReview);
+
+  // Session Export Modal State
+  const [exportModalJob, setExportModalJob] = useState<InspectionJob | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   useEffect(() => {
     if (selectedJobForReview) {
@@ -39,6 +44,11 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
   const handleSelectJob = (job: InspectionJob) => {
     setActiveJob(job);
     setIsDrawerOpen(true);
+  };
+
+  const handleOpenExportModal = (job: InspectionJob) => {
+    setExportModalJob(job);
+    setIsExportModalOpen(true);
   };
 
   const handleCloseDrawer = () => {
@@ -73,6 +83,7 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
       <InspectionTable
         jobs={jobs}
         onSelectJob={handleSelectJob}
+        onExportSessionUrl={handleOpenExportModal}
         onRefreshData={reloadJobs}
       />
 
@@ -83,6 +94,14 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
         onClose={handleCloseDrawer}
         onJobUpdated={reloadJobs}
       />
+
+      {/* Export Session URL Modal */}
+      <ExportJobSessionModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        job={exportModalJob}
+      />
     </div>
   );
 };
+

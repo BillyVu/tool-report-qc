@@ -430,6 +430,53 @@ export const INITIAL_TEMPLATES: ChecklistTemplate[] = [
         }
       }
     ]
+  },
+  {
+    id: 'TMPL-MACBOOK-M3-02',
+    title: 'Quy trình Kiểm định MacBook Pro 16 M3 Max',
+    productCode: 'MBP-M3-2026',
+    productName: 'MacBook Pro 16 inch M3 Max',
+    docxTemplateName: 'Mau_Bao_Cao_QC_Laptop.docx',
+    version: '2.0.0',
+    updatedAt: '2026-07-29T10:00:00',
+    steps: [
+      {
+        stepId: 'STEP_1',
+        title: 'Kiểm tra bề mặt sơn Space Black & Màn hình Liquid Retina XDR',
+        sampleSize: '50 pcs',
+        requiredPhotoCount: 2,
+        photoSlots: ['Slot 1: Mặt lưng nhôm Space Black', 'Slot 2: Màn hình mở góc 90°'],
+        inputType: 'PHOTO_AND_TEXT',
+        referenceImageUrl: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600&auto=format&fit=crop&q=80',
+        isPhotoRequired: true,
+        passCriteria: 'Lớp nhôm anodized đồng nhất, không tróc sơn, màn hình sáng đều',
+        mapping: {
+          imageTag: '{{photo_mbp_body}}',
+          noteTag: '{{note_mbp_body}}',
+          statusTag: '{{status_mbp_body}}',
+          imageWidthMm: 60,
+          imageHeightMm: 45
+        }
+      },
+      {
+        stepId: 'STEP_2',
+        title: 'Kiểm tra Bàn phím Magic Keyboard & Touch ID',
+        sampleSize: '50 pcs',
+        requiredPhotoCount: 1,
+        photoSlots: ['Slot 1: Màn hình phím & Touch ID'],
+        inputType: 'PHOTO_AND_TEXT',
+        referenceImageUrl: 'https://images.unsplash.com/photo-1587829741301-dc798b83add3?w=600&auto=format&fit=crop&q=80',
+        isPhotoRequired: true,
+        passCriteria: 'Gõ phím nảy mượt, đèn nền phím sáng đều, Touch ID phản hồi ngay',
+        mapping: {
+          imageTag: '{{photo_mbp_kb}}',
+          noteTag: '{{note_mbp_kb}}',
+          statusTag: '{{status_mbp_kb}}',
+          imageWidthMm: 60,
+          imageHeightMm: 45
+        }
+      }
+    ]
   }
 ];
 

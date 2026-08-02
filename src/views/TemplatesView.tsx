@@ -10,11 +10,13 @@ import {
   Search,
   Check,
   Tag,
-  ArrowUpDown
+  ArrowUpDown,
+  Eye
 } from 'lucide-react';
 import { ChecklistTemplate } from '../types/qc';
 import { qcService } from '../services/qcService';
 import { TemplateFormModal } from '../components/templates/TemplateFormModal';
+import { TemplatePreviewModal } from '../components/templates/TemplatePreviewModal';
 
 export const TemplatesView: React.FC = () => {
   const [templates, setTemplates] = useState<ChecklistTemplate[]>(qcService.getTemplates());
@@ -24,8 +26,17 @@ export const TemplatesView: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<ChecklistTemplate | null>(null);
 
+  // Preview Modal state
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewTemplate, setPreviewTemplate] = useState<ChecklistTemplate | null>(null);
+
   const reloadTemplates = () => {
     setTemplates(qcService.getTemplates());
+  };
+
+  const handlePreview = (tmpl: ChecklistTemplate) => {
+    setPreviewTemplate(tmpl);
+    setIsPreviewOpen(true);
   };
 
   const handleCreateNew = () => {
@@ -184,14 +195,25 @@ export const TemplatesView: React.FC = () => {
 
             {/* Actions Card Footer */}
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-              <button
-                onClick={() => handleDuplicate(tmpl)}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-medium transition-colors flex items-center gap-1.5"
-                title="Nhân bản mẫu checklist"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>Nhân bản</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => handlePreview(tmpl)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200"
+                  title="Xem trước giao diện công nhân nhập checklist"
+                >
+                  <Eye className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Xem Trước</span>
+                </button>
+
+                <button
+                  onClick={() => handleDuplicate(tmpl)}
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-medium transition-colors flex items-center gap-1"
+                  title="Nhân bản mẫu checklist"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Nhân bản</span>
+                </button>
+              </div>
 
               <div className="flex items-center gap-2">
                 <button
@@ -206,7 +228,7 @@ export const TemplatesView: React.FC = () => {
                   className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-1.5"
                 >
                   <Edit3 className="w-3.5 h-3.5" />
-                  <span>Sửa & Cấu hình Mapping</span>
+                  <span>Sửa & Cấu hình</span>
                 </button>
               </div>
             </div>
@@ -220,6 +242,13 @@ export const TemplatesView: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         template={selectedTemplate}
         onSave={handleSaveTemplate}
+      />
+
+      {/* Template Worker Interactive Preview Modal */}
+      <TemplatePreviewModal
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        template={previewTemplate}
       />
     </div>
   );
