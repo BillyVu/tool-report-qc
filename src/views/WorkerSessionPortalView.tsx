@@ -22,9 +22,8 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { InspectionJob, ChecklistTemplate, StepResult, PhotoSlotData, PhotoType } from '../types/qc';
-import { qcService } from '../services/qcService';
+import { workerSessionApi } from '../services/workerSessionApi';
 import { getPhotoTypeInfo } from '../constants/photoTypes';
-import { detectDataFromPhoto } from '../services/aiDetectionService';
 import { generateDocxReport } from '../services/docxExportService';
 import { getDeviceMacAddress, getDeviceInfo } from '../utils/deviceTracker';
 
@@ -48,6 +47,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     minutesRemaining?: number;
     expiresAtFormatted?: string;
   } | null>(null);
+  const [sessionError, setSessionError] = useState('');
 
   const [stepResults, setStepResults] = useState<StepResult[]>([]);
   const [workerName, setWorkerName] = useState('');
@@ -67,10 +67,15 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   const [aiAnalyzingStepId, setAiAnalyzingStepId] = useState<string | null>(null);
 
   useEffect(() => {
-    const data = qcService.validateJobSession(jobId, token);
-    setSessionData(data);
+    let isMounted = true;
 
-    if (data.isValid && !data.isExpired && data.job && data.template) {
+    const loadSession = async () => {
+      try {
+        const data = await workerSessionApi.getSession(jobId, token);
+        if (!isMounted) return;
+        setSessionData(data);
+
+        if (data.isValid && !data.isExpired && data.job && data.template) {
       const autoMac = data.job.workerMac || getDeviceMacAddress();
       const autoDev = data.job.sessionTracker?.deviceInfo || getDeviceInfo();
 
@@ -81,9 +86,9 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       setLineInput(data.job.line || 'Chuyền 01');
       setShiftInput(data.job.shift || 'Ca Sáng (06:00 - 14:00)');
 
-      if (data.job.sessionTracker?.workerName) {
+      if (data.checkedInAt || data.job.sessionTracker?.workerName) {
         setIsCheckedIn(true);
-        setWorkerName(data.job.sessionTracker.workerName);
+        setWorkerName(data.job.sessionTracker?.workerName || data.job.workerName || '');
       } else {
         setWorkerName(data.job.workerName || '');
       }
@@ -125,10 +130,23 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       });
 
       setStepResults(initialResults);
-    }
+        }
+      } catch (error) {
+        console.error('Failed to load worker session:', error);
+        if (isMounted) {
+          setSessionError(error instanceof Error ? error.message : 'Không thể tải phiên kiểm định.');
+          setSessionData({ isValid: false, isExpired: false });
+        }
+      }
+    };
+
+    loadSession();
+    return () => {
+      isMounted = false;
+    };
   }, [jobId, token]);
 
-  const handleConfirmCheckIn = (e: React.FormEvent) => {
+  const handleConfirmCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!workerNameInput.trim()) {
       alert('Vui lòng nhập họ và tên công nhân mở link.');
@@ -138,17 +156,22 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     const finalMac = deviceMac.trim() || getDeviceMacAddress();
     const finalDev = deviceInfo.trim() || getDeviceInfo();
 
-    qcService.recordWorkerSessionCheckIn(jobId, token, {
-      workerName: workerNameInput.trim(),
-      workerId: workerIdInput.trim() || undefined,
-      line: lineInput.trim() || undefined,
-      shift: shiftInput.trim() || undefined,
-      deviceMac: finalMac,
-      deviceInfo: finalDev
-    });
+    try {
+      await workerSessionApi.checkIn(jobId, token, {
+        workerName: workerNameInput.trim(),
+        workerId: workerIdInput.trim() || undefined,
+        line: lineInput.trim() || undefined,
+        shift: shiftInput.trim() || undefined,
+        deviceInfo: `${finalDev} | Device ID: ${finalMac}`
+      });
 
-    setWorkerName(workerNameInput.trim());
-    setIsCheckedIn(true);
+      setDeviceMac(finalMac);
+      setDeviceInfo(finalDev);
+      setWorkerName(workerNameInput.trim());
+      setIsCheckedIn(true);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không thể check-in phiên kiểm định.');
+    }
   };
 
   // Loading state
@@ -174,7 +197,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           <div>
             <h2 className="text-xl font-bold text-slate-800">URL Không Hợp Lệ</h2>
             <p className="text-xs text-slate-500 mt-2">
-              Liên kết phiên kiểm tra không tồn tại hoặc đã bị hủy bởi QC Admin.
+              {sessionError || 'Liên kết phiên kiểm tra không tồn tại hoặc đã bị hủy bởi QC Admin.'}
             </p>
           </div>
           <button
@@ -240,6 +263,17 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     slotIndex: number, 
     file: File
   ) => {
+    const step = template.steps.find(s => s.stepId === stepId);
+    const uploadForm = new FormData();
+    uploadForm.set('photo', file);
+    uploadForm.set('stepId', stepId);
+    uploadForm.set('slotIndex', String(slotIndex));
+    const uploadResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: uploadForm
+    });
+    if (!uploadResponse.ok) throw new Error('Không thể lưu ảnh lên hệ thống QC.');
+    const uploadedPhoto = await uploadResponse.json() as { id: string };
     const reader = new FileReader();
     reader.onload = async (e) => {
       const dataUrl = e.target?.result as string;
@@ -264,26 +298,24 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
         };
       }));
 
-      // Trigger AI Detection if step enables AI
-      const step = template.steps.find(s => s.stepId === stepId);
+      // Gemini runs only in the server-side queue so worker devices cannot exhaust quota.
       if (step?.enableAiDetection) {
-        const slotObj = (step.photoSlotConfigs || []).find(c => c.slotIndex === slotIndex);
-        const photoType = slotObj?.photoType || 'GENERAL_OTHER';
-
         setAiAnalyzingStepId(stepId);
         try {
-          const aiRes = await detectDataFromPhoto(dataUrl, {
-            detectType: step.aiDetectType || 'GENERAL',
-            photoType,
-            customPrompt: step.aiDetectPrompt
+          const analysisResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos/${encodeURIComponent(uploadedPhoto.id)}/analyze?token=${encodeURIComponent(token)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ detectType: step.aiDetectType || 'GENERAL' })
           });
+          if (!analysisResponse.ok) throw new Error('Không thể đưa tác vụ Gemini vào hàng đợi.');
+          const analysis = await analysisResponse.json() as { status: string; result_text?: string };
 
           setStepResults(prev => prev.map(sr => {
             if (sr.stepId !== stepId) return sr;
 
             const updatedSlots = (sr.photoSlotsData || []).map(s => {
               if (s.slotIndex === slotIndex) {
-                return { ...s, aiDetectedText: aiRes.detectedText };
+                return { ...s, aiDetectedText: analysis.result_text || 'Đang chờ Gemini xử lý' };
               }
               return s;
             });
@@ -291,9 +323,9 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
             return {
               ...sr,
               photoSlotsData: updatedSlots,
-              aiDetectedValue: aiRes.detectedText,
-              aiDetectStatus: aiRes.status,
-              textValue: sr.textValue || aiRes.detectedText
+              aiDetectedValue: analysis.result_text || 'Gemini đang xếp hàng xử lý; có thể tiếp tục bước kiểm tra khác.',
+              aiDetectStatus: analysis.status === 'COMPLETED' ? 'SUCCESS' : 'WARNING',
+              textValue: sr.textValue || analysis.result_text || ''
             };
           }));
         } catch (err) {
@@ -380,10 +412,10 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   }
 
   // Submit Worker Results
-  const handleSubmitResults = () => {
+  const handleSubmitResults = async () => {
     setIsSubmitting(true);
-    setTimeout(() => {
-      const res = qcService.submitWorkerSessionResults(
+    try {
+      const res = await workerSessionApi.submitResults(
         jobId,
         token,
         stepResults,
@@ -392,19 +424,21 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           workerId: workerIdInput || undefined,
           line: lineInput || undefined,
           shift: shiftInput || undefined,
-          deviceMac: deviceMac || getDeviceMacAddress(),
-          deviceInfo: deviceInfo || getDeviceInfo()
+          deviceInfo: `${deviceInfo || getDeviceInfo()} | Device ID: ${deviceMac || getDeviceMacAddress()}`
         }
       );
 
-      setIsSubmitting(false);
       if (res.success && res.job) {
         setIsSubmitted(true);
         setSubmittedJob(res.job);
       } else {
         alert(res.message);
       }
-    }, 800);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không thể nộp kết quả kiểm tra.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Download Report Word

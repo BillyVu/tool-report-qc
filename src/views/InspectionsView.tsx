@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ClipboardCheck, Download, RefreshCw, Zap } from 'lucide-react';
 import { InspectionJob } from '../types/qc';
-import { qcService } from '../services/qcService';
+import { adminApi } from '../services/adminApi';
 import { InspectionTable } from '../components/inspections/InspectionTable';
 import { InspectionDetailDrawer } from '../components/inspections/InspectionDetailDrawer';
 import { ExportJobSessionModal } from '../components/inspections/ExportJobSessionModal';
@@ -15,9 +15,11 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
   selectedJobForReview,
   onClearSelectedJob
 }) => {
-  const [jobs, setJobs] = useState<InspectionJob[]>(qcService.getJobs());
+  const [jobs, setJobs] = useState<InspectionJob[]>([]);
   const [activeJob, setActiveJob] = useState<InspectionJob | null>(selectedJobForReview);
   const [isDrawerOpen, setIsDrawerOpen] = useState(!!selectedJobForReview);
+  const [isLoadingJobs, setIsLoadingJobs] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   // Session Export Modal State
   const [exportModalJob, setExportModalJob] = useState<InspectionJob | null>(null);
@@ -30,15 +32,22 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
     }
   }, [selectedJobForReview]);
 
-  const reloadJobs = () => {
-    setJobs(qcService.getJobs());
+  const reloadJobs = async () => {
+    setIsLoadingJobs(true);
+    setLoadError('');
+    try {
+      setJobs(await adminApi.listJobs());
+    } catch (error) {
+      console.error('Failed to load admin jobs:', error);
+      setJobs([]);
+      setLoadError(error instanceof Error ? error.message : 'Không thể tải danh sách lệnh từ server.');
+    } finally {
+      setIsLoadingJobs(false);
+    }
   };
 
   useEffect(() => {
-    const unsubscribe = qcService.subscribe(() => {
-      reloadJobs();
-    });
-    return unsubscribe;
+    reloadJobs();
   }, []);
 
   const handleSelectJob = (job: InspectionJob) => {
@@ -79,6 +88,19 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
         </button>
       </div>
 
+      {loadError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+          {loadError}
+        </div>
+      )}
+
+      {isLoadingJobs && (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-600 flex items-center gap-2">
+          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          <span>Đang tải dữ liệu từ server...</span>
+        </div>
+      )}
+
       {/* Main Table Grid */}
       <InspectionTable
         jobs={jobs}
@@ -100,8 +122,8 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
         job={exportModalJob}
+        onSessionCreated={reloadJobs}
       />
     </div>
   );
 };
-

@@ -24,7 +24,6 @@ import {
 import { InspectionJob, ChecklistTemplate } from '../../types/qc';
 import { qcService } from '../../services/qcService';
 import { generateDocxReport } from '../../services/docxExportService';
-import { detectDataFromPhoto } from '../../services/aiDetectionService';
 
 interface InspectionDetailDrawerProps {
   job: InspectionJob | null;

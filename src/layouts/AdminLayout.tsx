@@ -5,12 +5,7 @@ import {
   ClipboardCheck, 
   History, 
   Settings, 
-  Zap, 
-  Sparkles, 
-  ShieldCheck, 
-  User,
-  Plus,
-  RefreshCw
+  Plus
 } from 'lucide-react';
 import { qcService } from '../services/qcService';
 import { CreateInspectionJobModal } from '../components/inspections/CreateInspectionJobModal';
@@ -19,18 +14,15 @@ interface AdminLayoutProps {
   children: React.ReactNode;
   activeTab: 'dashboard' | 'templates' | 'inspections' | 'audit' | 'settings';
   setActiveTab: (tab: 'dashboard' | 'templates' | 'inspections' | 'audit' | 'settings') => void;
-  onSimulateWorkerJob?: () => void;
 }
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({
   children,
   activeTab,
-  setActiveTab,
-  onSimulateWorkerJob
+  setActiveTab
 }) => {
   const [kpis, setKpis] = useState(qcService.getKPIs());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   useEffect(() => {
@@ -39,18 +31,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     });
     return unsubscribe;
   }, []);
-
-  const handleSimulate = () => {
-    setIsRefreshing(true);
-    setTimeout(() => {
-      const newJob = qcService.simulateWorkerSubmission();
-      setIsRefreshing(false);
-      setToastMessage(`⚡ Đã nhận dữ liệu QC mới: ${newJob.id} (${newJob.workerName})`);
-      if (onSimulateWorkerJob) onSimulateWorkerJob();
-      
-      setTimeout(() => setToastMessage(null), 4000);
-    }, 500);
-  };
 
   const navItems = [
     {
@@ -93,20 +73,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
   return (
     <div className="flex h-screen w-full bg-slate-50 font-sans overflow-hidden text-slate-800">
-      {/* Toast Notification Banner */}
-      {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl border border-slate-700 flex items-center gap-3 animate-bounce text-xs font-medium">
-          <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-          <span>{toastMessage}</span>
-          <button 
-            onClick={() => setToastMessage(null)} 
-            className="ml-2 text-slate-400 hover:text-white font-bold"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
       {/* SLEEK SIDEBAR */}
       <aside className="w-64 bg-slate-900 flex flex-col flex-shrink-0 border-r border-slate-800">
         {/* Brand Header */}
@@ -145,19 +111,6 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
             );
           })}
         </nav>
-
-        {/* Quick Simulator Button in Sidebar */}
-        <div className="p-4 border-t border-slate-800/80">
-          <button
-            onClick={handleSimulate}
-            disabled={isRefreshing}
-            className="w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition-all border border-slate-700/60 active:scale-95 disabled:opacity-50"
-            title="Mô phỏng công nhân từ xưởng gửi ảnh kiểm định"
-          >
-            <Zap className={`w-3.5 h-3.5 text-amber-400 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>Giả Lập Dữ Liệu Xưởng</span>
-          </button>
-        </div>
 
         {/* User Profile Footer */}
         <div className="p-4 border-t border-slate-800">
@@ -200,6 +153,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {/* MAIN BODY AREA */}
         <div className="flex-1 p-6 overflow-y-auto flex flex-col space-y-6">
+          {toastMessage && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-900">
+              {toastMessage}
+            </div>
+          )}
           {children}
         </div>
       </main>
@@ -217,4 +175,3 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     </div>
   );
 };
-

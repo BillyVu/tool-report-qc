@@ -208,6 +208,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
+              {recentJobs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-10 px-4 text-center text-sm text-slate-500">
+                    Chưa có lệnh QC để kiểm tra.
+                  </td>
+                </tr>
+              )}
               {recentJobs.map((job) => {
                 const isFail = job.status === 'FAILED';
                 const isDone = job.status === 'COMPLETED';

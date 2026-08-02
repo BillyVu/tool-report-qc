@@ -1,0 +1,89 @@
+services:
+  qc-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tool_report_qc}
+      POSTGRES_USER: ${POSTGRES_USER:-tool_report_qc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - qc_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qc-api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      qc-postgres:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tool_report_qc}:${POSTGRES_PASSWORD}@qc-postgres:5432/${POSTGRES_DB:-tool_report_qc}
+      QC_ADMIN_API_KEY: ${QC_ADMIN_API_KEY:?Set QC_ADMIN_API_KEY in .env}
+      UPLOADS_DIR: /var/lib/tool-report-qc/uploads
+    volumes:
+      - /srv/tool-report-qc/uploads:/var/lib/tool-report-qc/uploads
+    ports:
+      - "127.0.0.1:3020:3000"
+
+  qc-rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tool_report_qc}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    volumes:
+      - qc_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  qc-worker:
+    build: .
+    command: ["npx", "tsx", "server/worker.ts"]
+    restart: unless-stopped
+    depends_on:
+      qc-postgres:
+        condition: service_healthy
+      qc-rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tool_report_qc}:${POSTGRES_PASSWORD}@qc-postgres:5432/${POSTGRES_DB:-tool_report_qc}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-tool_report_qc}:${RABBITMQ_PASSWORD}@qc-rabbitmq:5672
+      WORKER_PREFETCH: ${WORKER_PREFETCH:-2}
+    volumes:
+      - /srv/tool-report-qc/uploads:/var/lib/tool-report-qc/uploads
+
+  qc-gemini-worker:
+    build: .
+    command: ["npx", "tsx", "server/geminiWorker.ts"]
+    restart: unless-stopped
+    depends_on:
+      qc-postgres:
+        condition: service_healthy
+      qc-rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tool_report_qc}:${POSTGRES_PASSWORD}@qc-postgres:5432/${POSTGRES_DB:-tool_report_qc}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-tool_report_qc}:${RABBITMQ_PASSWORD}@qc-rabbitmq:5672
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_MAX_RPM: ${GEMINI_MAX_RPM:-10}
+      GEMINI_CIRCUIT_COOLDOWN_MS: ${GEMINI_CIRCUIT_COOLDOWN_MS:-300000}
+      UPLOADS_DIR: /var/lib/tool-report-qc/uploads
+    volumes:
+      - /srv/tool-report-qc/uploads:/var/lib/tool-report-qc/uploads
+
+volumes:
+  qc_postgres_data:
+  qc_rabbitmq_data:

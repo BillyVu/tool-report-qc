@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, ShieldCheck, Building2, RefreshCw, FileText, Check } from 'lucide-react';
-import { qcService } from '../services/qcService';
+import { KeyRound, Building2, RefreshCw, FileText, Check } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
   const [factoryName, setFactoryName] = useState('NHÀ MÁY SẢN XUẤT ĐIỆN TỬ & THIẾT BỊ THÔNG MINH');
@@ -8,17 +7,19 @@ export const SettingsView: React.FC = () => {
   const [defaultWidth, setDefaultWidth] = useState(60);
   const [defaultHeight, setDefaultHeight] = useState(45);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(30);
+  const [adminApiKey, setAdminApiKey] = useState(() => localStorage.getItem('qc_admin_api_key') || '');
   const [isSaved, setIsSaved] = useState(false);
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
+    localStorage.setItem('qc_admin_api_key', adminApiKey.trim());
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
   };
 
   const handleResetData = () => {
-    if (window.confirm('Bạn có chắc chắn muốn đặt lại dữ liệu mặc định ban đầu? Tất cả dữ liệu thử nghiệm sẽ được khôi phục.')) {
-      qcService.resetToDefault();
+    if (window.confirm('Bạn có chắc chắn muốn xóa cache local trên trình duyệt này? Dữ liệu server PostgreSQL không bị ảnh hưởng.')) {
+      ['qc_admin_templates_v2', 'qc_admin_jobs_v2', 'qc_admin_logs_v2'].forEach((key) => localStorage.removeItem(key));
       window.location.reload();
     }
   };
@@ -67,6 +68,29 @@ export const SettingsView: React.FC = () => {
                 className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
             </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <KeyRound className="w-4 h-4 text-amber-600" />
+            <span>Kết Nối API Server Local/VPS</span>
+          </h2>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Admin API Key cho tester nội bộ
+            </label>
+            <input
+              type="password"
+              value={adminApiKey}
+              onChange={(e) => setAdminApiKey(e.target.value)}
+              placeholder="Nhập QC_ADMIN_API_KEY để tải lệnh và xuất URL session"
+              className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-[11px] text-slate-500 mt-1">
+              Key này lưu trong trình duyệt để verify nội bộ. Production cần thay bằng đăng nhập/RBAC trước khi public.
+            </p>
           </div>
         </div>
 
@@ -133,7 +157,7 @@ export const SettingsView: React.FC = () => {
             className="px-4 py-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-colors flex items-center gap-1.5"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            <span>Khôi Phục Dữ Liệu Mẫu Ban Đầu</span>
+            <span>Xóa Cache Local Của Trình Duyệt</span>
           </button>
 
           <button

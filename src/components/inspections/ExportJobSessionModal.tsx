@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { 
+import {
   X, 
   Link, 
   Copy, 
@@ -12,20 +12,24 @@ import {
   QrCode
 } from 'lucide-react';
 import { InspectionJob } from '../../types/qc';
-import { qcService } from '../../services/qcService';
+import { adminApi } from '../../services/adminApi';
 
 interface ExportJobSessionModalProps {
   isOpen: boolean;
   onClose: () => void;
   job: InspectionJob | null;
+  onSessionCreated?: () => void | Promise<void>;
 }
 
 export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   isOpen,
   onClose,
-  job
+  job,
+  onSessionCreated
 }) => {
   const [copied, setCopied] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState('');
   const [sessionInfo, setSessionInfo] = useState<{
     sessionUrl: string;
     expiresAt: string;
@@ -44,22 +48,28 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   const expiresDate = sessionInfo?.expiresAt || job.sessionExpiresAt;
   const isExpired = expiresDate ? new Date(expiresDate).getTime() < Date.now() : false;
 
-  const handleGenerateUrl = () => {
+  const handleGenerateUrl = async () => {
+    setIsGenerating(true);
+    setError('');
     try {
-      const res = qcService.generateJobSessionUrl(job.id);
+      const res = await adminApi.createWorkerSession(job.id);
       setSessionInfo(res);
       setCopied(false);
+      await onSessionCreated?.();
       return res.sessionUrl;
     } catch (e) {
       console.error('Failed to generate session URL:', e);
+      setError(e instanceof Error ? e.message : 'Không thể tạo Session URL từ server.');
       return null;
+    } finally {
+      setIsGenerating(false);
     }
   };
 
-  const handleCopyLink = () => {
+  const handleCopyLink = async () => {
     let urlToCopy = currentSessionUrl;
     if (!urlToCopy) {
-      urlToCopy = handleGenerateUrl();
+      urlToCopy = await handleGenerateUrl();
     }
     if (urlToCopy) {
       navigator.clipboard.writeText(urlToCopy);
@@ -117,6 +127,12 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
             </div>
           </div>
 
+          {error && (
+            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-xs font-semibold text-red-700">
+              {error}
+            </div>
+          )}
+
           {/* URL Box or Action */}
           {currentSessionUrl ? (
             <div className="space-y-3">
@@ -158,10 +174,11 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
               <div className="flex items-center justify-between pt-2">
                 <button
                   onClick={handleGenerateUrl}
+                  disabled={isGenerating}
                   className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Tạo lại / Gia hạn 24h mới</span>
+                  <RefreshCw className={`w-3.5 h-3.5 ${isGenerating ? 'animate-spin' : ''}`} />
+                  <span>{isGenerating ? 'Đang tạo link...' : 'Tạo lại / Gia hạn 24h mới'}</span>
                 </button>
 
                 <a
@@ -188,10 +205,11 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
               </div>
               <button
                 onClick={handleGenerateUrl}
+                disabled={isGenerating}
                 className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all inline-flex items-center gap-2"
               >
                 <Share2 className="w-4 h-4" />
-                <span>Xuất URL Phiên Làm Việc (24h)</span>
+                <span>{isGenerating ? 'Đang tạo Session URL...' : 'Xuất URL Phiên Làm Việc (24h)'}</span>
               </button>
             </div>
           )}

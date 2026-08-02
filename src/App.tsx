@@ -51,9 +51,6 @@ export default function App() {
     <AdminLayout
       activeTab={activeTab}
       setActiveTab={setActiveTab}
-      onSimulateWorkerJob={() => {
-        // Refresh triggers inside components automatically via service listener
-      }}
     >
       {activeTab === 'dashboard' && (
         <DashboardView
@@ -77,4 +74,3 @@ export default function App() {
     </AdminLayout>
   );
 }
-

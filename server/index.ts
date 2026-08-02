@@ -1,0 +1,231 @@
+import 'dotenv/config';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { existsSync, mkdirSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import express, { NextFunction, Request, Response } from 'express';
+import multer from 'multer';
+import { db } from './db.js';
+import { createSessionToken, hashSessionToken, verifySessionToken } from './session.js';
+import { imageUploadFilter } from './uploads.js';
+import { enqueuePhotoProcessing } from './outbox.js';
+import { enqueueGeminiAnalysis } from './geminiOutbox.js';
+import { toJsonbParam } from './jsonParam.js';
+
+const port = Number(process.env.PORT || 3000);
+const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
+const adminApiKey = process.env.QC_ADMIN_API_KEY;
+
+if (!adminApiKey) throw new Error('QC_ADMIN_API_KEY is required');
+mkdirSync(uploadsDirectory, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => callback(null, uploadsDirectory),
+    filename: (_req, file, callback) => callback(null, `${randomUUID()}${extensionFor(file.mimetype)}`),
+  }),
+  limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => callback(null, imageUploadFilter(file)),
+});
+
+function extensionFor(mimeType: string): string {
+  return mimeType === 'image/png' ? '.png' : mimeType === 'image/webp' ? '.webp' : '.jpg';
+}
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const value = req.header('x-qc-admin-key');
+  if (!value) return res.status(401).json({ error: 'Admin authentication is required.' });
+  const candidate = Buffer.from(value);
+  const expected = Buffer.from(adminApiKey);
+  if (candidate.length !== expected.length || !timingSafeEqual(candidate, expected)) {
+    return res.status(401).json({ error: 'Admin authentication is required.' });
+  }
+  next();
+}
+
+async function getSession(jobId: string, token: string) {
+  const result = await db.query(
+    `SELECT s.*, j.external_id AS job_external_id, j.batch_number, j.product_code, j.product_name, j.status,
+            j.step_results, j.template_snapshot, j.worker_id AS job_worker_id, j.worker_name AS job_worker_name,
+            j.shift, j.line
+       FROM worker_sessions s JOIN inspection_jobs j ON j.id = s.job_id
+      WHERE j.external_id = $1 AND s.revoked_at IS NULL`,
+    [jobId],
+  );
+  return result.rows.find((row) => verifySessionToken(token, row.token_hash));
+}
+
+function serializeWorkerSession(session: any) {
+  return {
+    job: {
+      id: session.job_external_id, batchNumber: session.batch_number, productCode: session.product_code,
+      productName: session.product_name, status: session.status, stepResults: session.step_results,
+      workerId: session.job_worker_id, workerName: session.job_worker_name, shift: session.shift, line: session.line,
+    },
+    template: session.template_snapshot,
+    expiresAt: session.expires_at,
+    checkedInAt: session.checked_in_at,
+  };
+}
+
+async function workerSessionGuard(req: Request, res: Response, next: NextFunction) {
+    const token = String(req.body?.token || req.query.token || '');
+    const session = token && await getSession(req.params.jobId, token);
+    if (!session) return res.status(401).json({ error: 'Session is invalid, revoked, or expired.' });
+    if (new Date(session.expires_at).getTime() <= Date.now()) {
+      return res.status(410).json({ error: 'Session expired.', ...serializeWorkerSession(session) });
+    }
+    res.locals.workerSession = session;
+    next();
+}
+
+const app = express();
+app.use(express.json({ limit: '1mb' }));
+
+app.get('/api/health', async (_req, res) => {
+  await db.query('SELECT 1');
+  res.json({ status: 'ok' });
+});
+
+app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
+  const { externalId, batchNumber, productCode, productName, templateId, templateSnapshot, workerId, workerName, shift, line } = req.body;
+  if (![externalId, batchNumber, productCode, productName, templateSnapshot].every(Boolean)) {
+    return res.status(400).json({ error: 'externalId, batchNumber, productCode, productName, and templateSnapshot are required.' });
+  }
+  const job = await db.query(
+    `INSERT INTO inspection_jobs (external_id, batch_number, product_code, product_name, template_id, template_snapshot, worker_id, worker_name, shift, line)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [externalId, batchNumber, productCode, productName, templateId || null, toJsonbParam(templateSnapshot), workerId || null, workerName || null, shift || null, line || null],
+  );
+  await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_CREATED')`, [job.rows[0].id]);
+  res.status(201).json(job.rows[0]);
+});
+
+app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {
+  const jobs = await db.query(
+    `SELECT external_id, batch_number, product_code, product_name, template_id, status,
+            worker_id, worker_name, shift, line, created_at, updated_at, completed_at,
+            step_results, export_count, last_exported_at
+       FROM inspection_jobs
+      ORDER BY created_at DESC`,
+  );
+  res.json(jobs.rows);
+});
+
+app.post('/api/admin/jobs/:jobId/sessions', requireAdmin, async (req, res) => {
+  const token = createSessionToken();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const job = await db.query('SELECT id FROM inspection_jobs WHERE external_id = $1', [req.params.jobId]);
+  if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  await db.query('UPDATE worker_sessions SET revoked_at = now() WHERE job_id = $1 AND revoked_at IS NULL', [job.rows[0].id]);
+  await db.query('INSERT INTO worker_sessions (job_id, token_hash, expires_at) VALUES ($1, $2, $3)', [job.rows[0].id, hashSessionToken(token), expiresAt]);
+  await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'WORKER_SESSION_CREATED')`, [job.rows[0].id]);
+  res.status(201).json({ token, expiresAt: expiresAt.toISOString() });
+});
+
+app.get('/api/worker-sessions/:jobId', workerSessionGuard, async (_req, res) => {
+  const session = res.locals.workerSession;
+  res.json(serializeWorkerSession(session));
+});
+
+app.post('/api/worker-sessions/:jobId/check-in', workerSessionGuard, async (req, res) => {
+  const session = res.locals.workerSession;
+  const { workerName, workerId, deviceInfo, shift, line } = req.body;
+  if (!workerName?.trim()) return res.status(400).json({ error: 'workerName is required.' });
+  await db.query('UPDATE worker_sessions SET checked_in_at = now(), worker_name = $1, worker_id = $2, device_info = $3 WHERE id = $4', [workerName.trim(), workerId || null, deviceInfo || null, session.id]);
+  await db.query('UPDATE inspection_jobs SET worker_name = $1, worker_id = $2, shift = COALESCE($3, shift), line = COALESCE($4, line), updated_at = now(), version = version + 1 WHERE id = $5', [workerName.trim(), workerId || null, shift || null, line || null, session.job_id]);
+  await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'WORKER', $2, 'WORKER_CHECKED_IN')`, [session.job_id, workerName.trim()]);
+  res.status(204).end();
+});
+
+app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single('photo'), async (req, res) => {
+  const session = res.locals.workerSession;
+  if (!req.file) return res.status(400).json({ error: 'A JPEG, PNG, or WEBP photo is required.' });
+  const { stepId, slotIndex } = req.body;
+  if (!stepId || !Number.isInteger(Number(slotIndex))) {
+    await fs.unlink(req.file.path);
+    return res.status(400).json({ error: 'stepId and integer slotIndex are required.' });
+  }
+  const data = await fs.readFile(req.file.path);
+  const sha256 = createHash('sha256').update(data).digest('hex');
+  const photo = await db.query(
+    `INSERT INTO evidence_photos (job_id, session_id, step_id, slot_index, storage_path, original_filename, mime_type, byte_size, sha256)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, step_id, slot_index, mime_type, byte_size, sha256, created_at`,
+    [session.job_id, session.id, stepId, Number(slotIndex), req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256],
+  );
+  await enqueuePhotoProcessing(photo.rows[0].id);
+  await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, 'PHOTO_UPLOADED', $3)`, [session.job_id, session.worker_name || 'Worker', toJsonbParam({ photoId: photo.rows[0].id, stepId })]);
+  res.status(201).json(photo.rows[0]);
+});
+
+app.post('/api/worker-sessions/:jobId/photos/:photoId/analyze', workerSessionGuard, async (req, res) => {
+  const session = res.locals.workerSession;
+  const detectType = req.body?.detectType;
+  if (!['IMEI_SERIAL', 'OCR_TEXT', 'COLOR_SCREEN', 'GENERAL'].includes(detectType)) {
+    return res.status(400).json({ error: 'A valid detectType is required.' });
+  }
+  const photo = await db.query(`SELECT id, sha256 FROM evidence_photos WHERE id = $1 AND job_id = $2`, [req.params.photoId, session.job_id]);
+  if (!photo.rowCount) return res.status(404).json({ error: 'Photo not found.' });
+  const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const existing = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = 'v1'`, [photo.rows[0].sha256, detectType, geminiModel]);
+  if (existing.rowCount) return res.status(200).json(existing.rows[0]);
+  try {
+    const analysis = await db.query(`INSERT INTO gemini_analyses (photo_id, source_sha256, detect_type, model) VALUES ($1, $2, $3, $4) RETURNING *`, [photo.rows[0].id, photo.rows[0].sha256, detectType, geminiModel]);
+    await enqueueGeminiAnalysis(analysis.rows[0].id, photo.rows[0].id);
+    res.status(202).json(analysis.rows[0]);
+  } catch (error: any) {
+    if (error?.code !== '23505') throw error;
+    const concurrent = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = 'v1'`, [photo.rows[0].sha256, detectType, geminiModel]);
+    res.status(200).json(concurrent.rows[0]);
+  }
+});
+
+app.get('/api/worker-sessions/:jobId/analyses/:analysisId', workerSessionGuard, async (req, res) => {
+  const session = res.locals.workerSession;
+  const analysis = await db.query(`SELECT a.* FROM gemini_analyses a JOIN evidence_photos p ON p.id = a.photo_id WHERE a.id = $1 AND p.job_id = $2`, [req.params.analysisId, session.job_id]);
+  if (!analysis.rowCount) return res.status(404).json({ error: 'Analysis not found.' });
+  res.json(analysis.rows[0]);
+});
+
+app.post('/api/worker-sessions/:jobId/submit', workerSessionGuard, async (req, res) => {
+  const session = res.locals.workerSession;
+  const { stepResults, workerInfo } = req.body;
+  if (!Array.isArray(stepResults)) return res.status(400).json({ error: 'stepResults must be an array.' });
+  const failed = stepResults.some((step) => step?.status === 'FAIL');
+  const status = failed ? 'FAILED' : 'COMPLETED';
+  const job = await db.query(
+    `UPDATE inspection_jobs
+        SET step_results = $1, status = $2, completed_at = now(),
+            worker_name = COALESCE($3, worker_name), worker_id = COALESCE($4, worker_id),
+            shift = COALESCE($5, shift), line = COALESCE($6, line),
+            updated_at = now(), version = version + 1
+      WHERE id = $7 RETURNING *`,
+    [
+      toJsonbParam(stepResults),
+      status,
+      workerInfo?.workerName || null,
+      workerInfo?.workerId || null,
+      workerInfo?.shift || null,
+      workerInfo?.line || null,
+      session.job_id,
+    ],
+  );
+  await db.query('UPDATE worker_sessions SET submitted_at = now() WHERE id = $1', [session.id]);
+  await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, 'WORKER_SUBMITTED', $3)`, [session.job_id, workerInfo?.workerName || session.worker_name || 'Worker', toJsonbParam({ status })]);
+  res.json({ job: job.rows[0] });
+});
+
+const distDirectory = join(process.cwd(), 'dist');
+if (existsSync(distDirectory)) {
+  app.use(express.static(distDirectory));
+  app.get('*', (_req, res) => {
+    res.sendFile(join(distDirectory, 'index.html'));
+  });
+}
+
+app.use((error: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error(error);
+  res.status(error instanceof multer.MulterError ? 400 : 500).json({ error: error.message || 'Internal server error.' });
+});
+
+app.listen(port, () => console.log(`QC API listening on ${port}`));

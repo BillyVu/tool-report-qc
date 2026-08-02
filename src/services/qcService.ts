@@ -1,9 +1,9 @@
 import { ChecklistTemplate, InspectionJob, StepResult, AuditLogEntry, DashboardKPI } from '../types/qc';
-import { INITIAL_TEMPLATES, INITIAL_JOBS, INITIAL_AUDIT_LOGS } from './mockData';
+import { TESTER_AUDIT_LOGS, TESTER_JOBS, TESTER_TEMPLATES } from './testerDefaults';
 
-const TEMPLATES_KEY = 'qc_admin_templates_v1';
-const JOBS_KEY = 'qc_admin_jobs_v1';
-const LOGS_KEY = 'qc_admin_logs_v1';
+const TEMPLATES_KEY = 'qc_admin_templates_v2';
+const JOBS_KEY = 'qc_admin_jobs_v2';
+const LOGS_KEY = 'qc_admin_logs_v2';
 
 class QCService {
   private templates: ChecklistTemplate[] = [];
@@ -18,18 +18,18 @@ class QCService {
   private loadFromStorage() {
     try {
       const storedTemplates = localStorage.getItem(TEMPLATES_KEY);
-      this.templates = storedTemplates ? JSON.parse(storedTemplates) : INITIAL_TEMPLATES;
+      this.templates = storedTemplates ? JSON.parse(storedTemplates) : TESTER_TEMPLATES;
 
       const storedJobs = localStorage.getItem(JOBS_KEY);
-      this.jobs = storedJobs ? JSON.parse(storedJobs) : INITIAL_JOBS;
+      this.jobs = storedJobs ? JSON.parse(storedJobs) : TESTER_JOBS;
 
       const storedLogs = localStorage.getItem(LOGS_KEY);
-      this.logs = storedLogs ? JSON.parse(storedLogs) : INITIAL_AUDIT_LOGS;
+      this.logs = storedLogs ? JSON.parse(storedLogs) : TESTER_AUDIT_LOGS;
     } catch (e) {
       console.error('Failed to parse QC storage:', e);
-      this.templates = INITIAL_TEMPLATES;
-      this.jobs = INITIAL_JOBS;
-      this.logs = INITIAL_AUDIT_LOGS;
+      this.templates = TESTER_TEMPLATES;
+      this.jobs = TESTER_JOBS;
+      this.logs = TESTER_AUDIT_LOGS;
     }
   }
 
@@ -268,7 +268,7 @@ class QCService {
     const minutesRemaining = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
     let template = this.getTemplateById(job.templateId);
     if (!template) {
-      template = this.templates[0] || INITIAL_TEMPLATES[0];
+      template = this.templates[0];
     }
 
     return {
@@ -400,7 +400,10 @@ class QCService {
     adminName?: string;
   }): InspectionJob {
     this.loadFromStorage();
-    const template = this.getTemplateById(jobData.templateId) || this.templates[0] || INITIAL_TEMPLATES[0];
+    const template = this.getTemplateById(jobData.templateId) || this.templates[0];
+    if (!template) {
+      throw new Error('Chưa có mẫu checklist để tạo lệnh kiểm tra.');
+    }
 
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
@@ -449,54 +452,15 @@ class QCService {
     return newJob;
   }
 
-  // --- WORKER SIMULATION ---
-  public simulateWorkerSubmission(): InspectionJob {
-    const template = this.templates[0] || INITIAL_TEMPLATES[0];
-    const newJobId = `JOB-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(100 + Math.random()*900)}`;
-    const isFail = Math.random() < 0.25;
-
-    const newJob: InspectionJob = {
-      id: newJobId,
-      batchNumber: `BATCH-VN-${Math.floor(9000 + Math.random()*1000)}`,
-      productCode: template.productCode,
-      productName: template.productName,
-      templateId: template.id,
-      status: isFail ? 'FAILED' : 'COMPLETED',
-      workerId: `W${Math.floor(100 + Math.random()*900)}`,
-      workerName: `Công nhân Chuyền ${Math.floor(1 + Math.random()*5)}`,
-      shift: 'Ca Sáng (06:00 - 14:00)',
-      line: `Chuyền Sản Xuất 0${Math.floor(1 + Math.random()*4)}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      stepResults: template.steps.map((s, idx) => {
-        const stepFail = isFail && idx === 1;
-        return {
-          stepId: s.stepId,
-          status: stepFail ? 'FAIL' : 'PASS',
-          note: stepFail 
-            ? 'Phát hiện sai lệch nhỏ bề mặt, đã ghi nhận gửi kiểm tra'
-            : `Đã chụp ảnh thực tế kiểm tra cho ${s.title}, đạt tiêu chuẩn`,
-          photoUrl: s.referenceImageUrl,
-          timestamp: new Date().toISOString()
-        };
-      })
-    };
-
-    this.jobs.unshift(newJob);
-    this.saveToStorage();
-    return newJob;
-  }
-
   // --- AUDIT LOGS ---
   public getAuditLogs(): AuditLogEntry[] {
     return [...this.logs];
   }
 
   public resetToDefault() {
-    this.templates = INITIAL_TEMPLATES;
-    this.jobs = INITIAL_JOBS;
-    this.logs = INITIAL_AUDIT_LOGS;
+    this.templates = TESTER_TEMPLATES;
+    this.jobs = TESTER_JOBS;
+    this.logs = TESTER_AUDIT_LOGS;
     this.saveToStorage();
   }
 }
