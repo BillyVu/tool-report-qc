@@ -13,6 +13,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { qcService } from '../services/qcService';
+import { CreateInspectionJobModal } from '../components/inspections/CreateInspectionJobModal';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -30,6 +31,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [kpis, setKpis] = useState(qcService.getKPIs());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   useEffect(() => {
     const unsubscribe = qcService.subscribe(() => {
@@ -187,12 +189,11 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           <div className="flex items-center gap-3">
             <button
-              onClick={handleSimulate}
-              disabled={isRefreshing}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs lg:text-sm font-semibold transition-all shadow-sm active:scale-95 disabled:opacity-50"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs lg:text-sm font-semibold transition-all shadow-sm active:scale-95"
             >
-              <Zap className={`w-4 h-4 text-amber-300 ${isRefreshing ? 'animate-spin' : ''}`} />
-              <span>Gửi Giả Lập QC</span>
+              <Plus className="w-4 h-4" />
+              <span>Tạo Lệnh Kiểm Tra</span>
             </button>
           </div>
         </header>
@@ -202,6 +203,17 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           {children}
         </div>
       </main>
+
+      {/* Create Inspection Job Modal */}
+      <CreateInspectionJobModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onJobCreated={(newJob) => {
+          setActiveTab('inspections');
+          setToastMessage(`✨ Đã khởi tạo lệnh kiểm tra mới: ${newJob.batchNumber}`);
+          setTimeout(() => setToastMessage(null), 4000);
+        }}
+      />
     </div>
   );
 };

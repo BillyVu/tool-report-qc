@@ -65,12 +65,12 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
 
   const completedDateStr = job.completedAt
     ? new Date(job.completedAt).toLocaleDateString('vi-VN', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
     : 'Chưa hoàn thành';
 
   // Process all image buffers for step results
@@ -124,43 +124,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
           new TableCell({
             borders: cellBorder,
             shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            children: [new Paragraph({ children: [new TextRun({ text: "Khách Hàng (Client):", bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            children: [new Paragraph({ children: [new TextRun({ text: matchedTemplate?.clientName || "ATT (Attn: Ava)", bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            children: [new Paragraph({ children: [new TextRun({ text: "Nhà Sản Xuất (Supplier):", bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            children: [new Paragraph({ children: [new TextRun({ text: matchedTemplate?.supplierName || "EAGLEON (VN) COMPANY LIMITED", size: 20 })] })],
-          }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({
-            borders: cellBorder,
-            shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            children: [new Paragraph({ children: [new TextRun({ text: "Địa Chỉ Nhà Máy:", bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            columnSpan: 3,
-            children: [new Paragraph({ children: [new TextRun({ text: matchedTemplate?.supplierLocation || "Lô CN-A5 CCN Châu Phong, Phù Lãng, Bắc Ninh, Việt Nam", size: 19 })] })],
-          }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({
-            borders: cellBorder,
-            shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            children: [new Paragraph({ children: [new TextRun({ text: "Sản Phẩm & Mã SKU:", bold: true, size: 20 })] })],
+            children: [new Paragraph({ children: [new TextRun({ text: "Sản Phẩm:", bold: true, size: 20 })] })],
           }),
           new TableCell({
             borders: cellBorder,
@@ -169,33 +133,11 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
           new TableCell({
             borders: cellBorder,
             shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            children: [new Paragraph({ children: [new TextRun({ text: "Build Number & Version:", bold: true, size: 20 })] })],
+            children: [new Paragraph({ children: [new TextRun({ text: "Quy Trình Checklist:", bold: true, size: 20 })] })],
           }),
           new TableCell({
             borders: cellBorder,
-            children: [new Paragraph({ children: [new TextRun({ text: `${matchedTemplate?.buildNumber || "X53.0-04-15.0-10.30.00"} | Sys: ${matchedTemplate?.systemVersion || "15"} | HW: ${matchedTemplate?.hardwareVersion || "V1.0"}`, size: 19, bold: true })] })],
-          }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({
-            borders: cellBorder,
-            shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            children: [new Paragraph({ children: [new TextRun({ text: "Tiêu Chuẩn AQL & Lấy Mẫu:", bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            children: [new Paragraph({ children: [new TextRun({ text: matchedTemplate?.aqlStandard || "ISO 2859-1 (100% Full Inspection)", size: 19 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            shading: { fill: "F8FAFC", type: ShadingType.CLEAR },
-            children: [new Paragraph({ children: [new TextRun({ text: "Số Lượng Đơn & Thùng:", bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            children: [new Paragraph({ children: [new TextRun({ text: `Đơn: ${matchedTemplate?.orderQty || "117 pcs"} | Thùng: ${matchedTemplate?.cartonQty || "24 cartons"}`, size: 19 })] })],
+            children: [new Paragraph({ children: [new TextRun({ text: matchedTemplate?.title || "Chuẩn", size: 20 })] })],
           }),
         ],
       }),
