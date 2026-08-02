@@ -16,6 +16,7 @@ services:
 
   qc-api:
     build: .
+    container_name: tool-report-qc-app
     restart: unless-stopped
     depends_on:
       qc-postgres:
@@ -29,6 +30,9 @@ services:
       - /srv/tool-report-qc/uploads:/var/lib/tool-report-qc/uploads
     ports:
       - "127.0.0.1:3020:3000"
+    networks:
+      - default
+      - traefik_public
 
   qc-rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -87,3 +91,7 @@ services:
 volumes:
   qc_postgres_data:
   qc_rabbitmq_data:
+
+networks:
+  traefik_public:
+    external: true
