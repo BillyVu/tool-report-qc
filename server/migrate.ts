@@ -6,7 +6,9 @@ const migrationsDirectory = new URL('./migrations/', import.meta.url);
 
 async function migrate() {
   await db.query(`CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
-  const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith('.sql')).sort();
+  const files = (await readdir(migrationsDirectory))
+    .filter((file) => file.endsWith('.sql') && !file.startsWith('.'))
+    .sort();
   for (const file of files) {
     const applied = await db.query('SELECT 1 FROM schema_migrations WHERE name = $1', [file]);
     if (applied.rowCount) continue;

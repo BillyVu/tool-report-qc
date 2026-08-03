@@ -25,6 +25,9 @@ test('loads admin jobs using the configured admin API key', async () => {
           updated_at: '2026-08-02T00:00:00.000Z',
           completed_at: null,
           step_results: [],
+          session_token: 'worker-token',
+          session_created_at: '2026-08-02T01:00:00.000Z',
+          session_expires_at: '2026-08-03T01:00:00.000Z',
         },
       ]), { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
@@ -36,6 +39,9 @@ test('loads admin jobs using the configured admin API key', async () => {
   assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
   assert.equal(jobs[0].id, 'JOB-001');
   assert.equal(jobs[0].workerName, '');
+  assert.equal(jobs[0].sessionToken, 'worker-token');
+  assert.equal(jobs[0].sessionCreatedAt, '2026-08-02T01:00:00.000Z');
+  assert.equal(jobs[0].sessionExpiresAt, '2026-08-03T01:00:00.000Z');
 });
 
 test('creates a worker session URL for an admin job', async () => {
@@ -45,6 +51,7 @@ test('creates a worker session URL for an admin job', async () => {
     pathname: '/',
     fetch: async () => new Response(JSON.stringify({
       token: 'worker-token',
+      createdAt: '2026-08-02T00:00:00.000Z',
       expiresAt: '2026-08-03T00:00:00.000Z',
     }), { status: 201, headers: { 'Content-Type': 'application/json' } }),
   });
@@ -52,7 +59,34 @@ test('creates a worker session URL for an admin job', async () => {
   const session = await api.createWorkerSession('JOB-001');
 
   assert.equal(session.token, 'worker-token');
+  assert.equal(session.createdAt, '2026-08-02T00:00:00.000Z');
   assert.equal(session.expiresAt, '2026-08-03T00:00:00.000Z');
+  assert.equal(session.sessionUrl, 'http://localhost:5173/?jobSession=JOB-001&token=worker-token');
+});
+
+test('extends an existing worker session without generating a new token', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const api = createAdminApi({
+    adminKey: 'secret',
+    origin: 'http://localhost:5173',
+    pathname: '/',
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        token: 'worker-token',
+        createdAt: '2026-08-02T00:00:00.000Z',
+        expiresAt: '2026-08-04T00:00:00.000Z',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  const session = await api.extendWorkerSession('JOB-001');
+
+  assert.equal(calls[0].url, '/api/admin/jobs/JOB-001/session/extend');
+  assert.equal(calls[0].init?.method, 'PATCH');
+  assert.equal(session.token, 'worker-token');
+  assert.equal(session.createdAt, '2026-08-02T00:00:00.000Z');
+  assert.equal(session.expiresAt, '2026-08-04T00:00:00.000Z');
   assert.equal(session.sessionUrl, 'http://localhost:5173/?jobSession=JOB-001&token=worker-token');
 });
 
@@ -138,6 +172,44 @@ test('loads checklist templates from the admin API database endpoint', async () 
   assert.equal(templates[0].title, 'Checklist DB');
 });
 
+test('loads a single admin job before exporting the Word report', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const api = createAdminApi({
+    adminKey: 'secret',
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        external_id: 'JOB-001',
+        batch_number: 'BATCH-001',
+        product_code: 'PRD-001',
+        product_name: 'May test',
+        template_id: 'TPL-001',
+        status: 'COMPLETED',
+        worker_id: null,
+        worker_name: 'Worker',
+        shift: 'Ca Sáng',
+        line: 'Chuyền 01',
+        created_at: '2026-08-02T00:00:00.000Z',
+        updated_at: '2026-08-02T01:00:00.000Z',
+        step_results: [
+          {
+            stepId: 'STEP_4',
+            status: 'PASS',
+            note: 'OK',
+            photos: [{ slotName: 'Bàn phím bật sáng', url: '/uploads/photo.png' }],
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  const job = await api.getJob('JOB-001');
+
+  assert.equal(calls[0].url, '/api/admin/jobs/JOB-001');
+  assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
+  assert.equal(job.stepResults[0].photos?.[0].url, '/uploads/photo.png');
+});
+
 test('saves a checklist template to the admin API database endpoint', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const template: ChecklistTemplate = {
@@ -195,4 +267,48 @@ test('updates and deletes checklist templates through the admin API', async () =
   assert.equal(calls[0].init?.method, 'PUT');
   assert.equal(calls[1].url, '/api/admin/templates/TMPL-EDIT');
   assert.equal(calls[1].init?.method, 'DELETE');
+});
+
+test('moderates an inspection step through the admin API', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const api = createAdminApi({
+    adminKey: 'secret',
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({
+        external_id: 'JOB-001',
+        batch_number: 'BATCH-001',
+        product_code: 'PRD-001',
+        product_name: 'May test',
+        template_id: 'TPL-001',
+        status: 'COMPLETED',
+        worker_id: null,
+        worker_name: 'Worker',
+        shift: 'Ca Sáng',
+        line: 'Chuyền 01',
+        created_at: '2026-08-02T00:00:00.000Z',
+        updated_at: '2026-08-02T01:00:00.000Z',
+        step_results: [
+          {
+            stepId: 'S1',
+            status: 'PASS',
+            note: 'Ảnh đạt',
+            moderationStatus: 'APPROVED',
+            adminReviewNote: 'Đủ bằng chứng.',
+          },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  const job = await api.moderateJobStep('JOB-001', 'S1', 'APPROVED', 'Đủ bằng chứng.');
+
+  assert.equal(calls[0].url, '/api/admin/jobs/JOB-001/step-results/S1/moderation');
+  assert.equal(calls[0].init?.method, 'PATCH');
+  assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+    moderationStatus: 'APPROVED',
+    adminReviewNote: 'Đủ bằng chứng.',
+  });
+  assert.equal(job.stepResults[0].moderationStatus, 'APPROVED');
 });

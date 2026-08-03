@@ -135,3 +135,56 @@ test('checks in and submits worker results through the API', async () => {
   assert.equal(submitted.job?.id, 'JOB-001');
   assert.equal(submitted.job?.status, 'COMPLETED');
 });
+
+test('saves worker draft results without submitting the inspection job', async () => {
+  const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
+  const api = createWorkerSessionApi({
+    fetch: async (url, init) => {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+      calls.push({ url: String(url), init, body });
+      return new Response(JSON.stringify({
+        job: {
+          external_id: 'JOB-001',
+          batch_number: 'BATCH-001',
+          product_code: 'PRD-001',
+          product_name: 'May test',
+          template_id: 'TPL-001',
+          status: 'IN_PROGRESS',
+          worker_id: 'W-1',
+          worker_name: 'Nguyen Van A',
+          shift: 'Ca Sáng',
+          line: 'Chuyền 01',
+          created_at: '2026-08-02T00:00:00.000Z',
+          updated_at: '2026-08-02T01:00:00.000Z',
+          completed_at: null,
+          step_results: [{ stepId: 'S1', status: 'PENDING', note: 'draft' }],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  const draft = await api.saveDraftResults('JOB-001', 'token', [{ stepId: 'S1', status: 'PENDING', note: 'draft' }], {
+    workerName: 'Nguyen Van A',
+    workerId: 'W-1',
+    line: 'Chuyền 01',
+    shift: 'Ca Sáng',
+    deviceInfo: 'Chrome',
+  });
+
+  assert.equal(calls[0].url, '/api/worker-sessions/JOB-001/draft');
+  assert.equal(calls[0].init?.method, 'POST');
+  assert.deepEqual(calls[0].body, {
+    token: 'token',
+    stepResults: [{ stepId: 'S1', status: 'PENDING', note: 'draft' }],
+    workerInfo: {
+      workerName: 'Nguyen Van A',
+      workerId: 'W-1',
+      line: 'Chuyền 01',
+      shift: 'Ca Sáng',
+      deviceInfo: 'Chrome',
+    },
+  });
+  assert.equal(draft.success, true);
+  assert.equal(draft.job?.status, 'IN_PROGRESS');
+  assert.equal(draft.job?.completedAt, undefined);
+});

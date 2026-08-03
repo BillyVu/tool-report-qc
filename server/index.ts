@@ -12,7 +12,7 @@ import { enqueuePhotoProcessing } from './outbox.js';
 import { enqueueGeminiAnalysis } from './geminiOutbox.js';
 import { toJsonbParam } from './jsonParam.js';
 import { serializeTemplateRow, templateDbParams } from './templates.js';
-import { buildInitialStepResults, updateJobStatusSql } from './adminJobs.js';
+import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, moderateStepResults, updateJobStatusSql } from './adminJobs.js';
 
 const port = Number(process.env.PORT || 3000);
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
@@ -49,8 +49,21 @@ async function getSession(jobId: string, token: string) {
   const result = await db.query(
     `SELECT s.*, j.external_id AS job_external_id, j.batch_number, j.product_code, j.product_name, j.status,
             j.step_results, j.template_snapshot, j.worker_id AS job_worker_id, j.worker_name AS job_worker_name,
-            j.shift, j.line
+            j.shift, j.line,
+            COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
        FROM worker_sessions s JOIN inspection_jobs j ON j.id = s.job_id
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'stepId', ep.step_id,
+                    'slotIndex', ep.slot_index,
+                    'photoUrl', '/uploads/' || ep.storage_path
+                  )
+                  ORDER BY ep.step_id, ep.slot_index, ep.created_at
+                ) AS evidence_photos
+           FROM evidence_photos ep
+          WHERE ep.job_id = j.id
+       ) p ON true
       WHERE j.external_id = $1 AND s.revoked_at IS NULL`,
     [jobId],
   );
@@ -58,15 +71,45 @@ async function getSession(jobId: string, token: string) {
 }
 
 function serializeWorkerSession(session: any) {
+  const stepResults = attachEvidencePhotosToStepResults(session.step_results, session.evidence_photos);
   return {
     job: {
       id: session.job_external_id, batchNumber: session.batch_number, productCode: session.product_code,
-      productName: session.product_name, status: session.status, stepResults: session.step_results,
+      productName: session.product_name, status: session.status, stepResults,
       workerId: session.job_worker_id, workerName: session.job_worker_name, shift: session.shift, line: session.line,
     },
     template: session.template_snapshot,
     expiresAt: session.expires_at,
     checkedInAt: session.checked_in_at,
+  };
+}
+
+async function getHydratedJobById(jobId: string) {
+  const result = await db.query(
+    `SELECT j.*,
+            COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
+       FROM inspection_jobs j
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'stepId', ep.step_id,
+                    'slotIndex', ep.slot_index,
+                    'photoUrl', '/uploads/' || ep.storage_path
+                  )
+                  ORDER BY ep.step_id, ep.slot_index, ep.created_at
+                ) AS evidence_photos
+           FROM evidence_photos ep
+          WHERE ep.job_id = j.id
+       ) p ON true
+      WHERE j.id = $1`,
+    [jobId],
+  );
+  if (!result.rowCount) return null;
+  const row = result.rows[0];
+  return {
+    ...row,
+    step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
+    evidence_photos: undefined,
   };
 }
 
@@ -83,6 +126,7 @@ async function workerSessionGuard(req: Request, res: Response, next: NextFunctio
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+app.use('/uploads', express.static(uploadsDirectory));
 
 app.get('/api/health', async (_req, res) => {
   await db.query('SELECT 1');
@@ -175,13 +219,77 @@ app.delete('/api/admin/templates/:templateId', requireAdmin, async (req, res) =>
 
 app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {
   const jobs = await db.query(
-    `SELECT external_id, batch_number, product_code, product_name, template_id, status,
-            worker_id, worker_name, shift, line, created_at, updated_at, completed_at,
-            step_results, template_snapshot, admin_notes, export_count, last_exported_at
-       FROM inspection_jobs
-      ORDER BY created_at DESC`,
+    `SELECT j.external_id, j.batch_number, j.product_code, j.product_name, j.template_id, j.status,
+            j.worker_id, j.worker_name, j.shift, j.line, j.created_at, j.updated_at, j.completed_at,
+            j.step_results, j.template_snapshot, j.admin_notes, j.export_count, j.last_exported_at,
+            s.token_value AS session_token, s.created_at AS session_created_at, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at,
+            COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
+       FROM inspection_jobs j
+       LEFT JOIN LATERAL (
+         SELECT token_value, created_at, expires_at, revoked_at
+           FROM worker_sessions
+          WHERE job_id = j.id AND revoked_at IS NULL
+          ORDER BY created_at DESC
+          LIMIT 1
+       ) s ON true
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'stepId', ep.step_id,
+                    'slotIndex', ep.slot_index,
+                    'photoUrl', '/uploads/' || ep.storage_path
+                  )
+                  ORDER BY ep.step_id, ep.slot_index, ep.created_at
+                ) AS evidence_photos
+           FROM evidence_photos ep
+          WHERE ep.job_id = j.id
+       ) p ON true
+      ORDER BY j.created_at DESC`,
   );
-  res.json(jobs.rows);
+  res.json(jobs.rows.map((row) => ({
+    ...row,
+    step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
+    evidence_photos: undefined,
+  })));
+});
+
+app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
+  const jobs = await db.query(
+    `SELECT j.external_id, j.batch_number, j.product_code, j.product_name, j.template_id, j.status,
+            j.worker_id, j.worker_name, j.shift, j.line, j.created_at, j.updated_at, j.completed_at,
+            j.step_results, j.template_snapshot, j.admin_notes, j.export_count, j.last_exported_at,
+            s.created_at AS session_created_at, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at,
+            COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
+       FROM inspection_jobs j
+       LEFT JOIN LATERAL (
+         SELECT created_at, expires_at, revoked_at
+           FROM worker_sessions
+          WHERE job_id = j.id AND revoked_at IS NULL
+          ORDER BY created_at DESC
+          LIMIT 1
+       ) s ON true
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'stepId', ep.step_id,
+                    'slotIndex', ep.slot_index,
+                    'photoUrl', '/uploads/' || ep.storage_path
+                  )
+                  ORDER BY ep.step_id, ep.slot_index, ep.created_at
+                ) AS evidence_photos
+           FROM evidence_photos ep
+          WHERE ep.job_id = j.id
+       ) p ON true
+      WHERE j.external_id = $1`,
+    [req.params.jobId],
+  );
+  if (!jobs.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  const row = jobs.rows[0];
+  res.json({
+    ...row,
+    step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
+    evidence_photos: undefined,
+  });
 });
 
 app.get('/api/admin/kpis', requireAdmin, async (_req, res) => {
@@ -268,6 +376,43 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/note', requireAdmin, asyn
   res.json(result.rows[0]);
 });
 
+app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin, async (req, res) => {
+  const moderationStatus = String(req.body?.moderationStatus || '');
+  if (!['PENDING_REVIEW', 'APPROVED', 'REJECTED'].includes(moderationStatus)) {
+    return res.status(400).json({ error: 'A valid moderationStatus is required.' });
+  }
+  const adminReviewNote = String(req.body?.adminReviewNote ?? '');
+  const job = await db.query(`SELECT id, step_results FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
+  if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
+
+  const { found, previousStatus, updatedSteps } = moderateStepResults(
+    job.rows[0].step_results,
+    req.params.stepId,
+    moderationStatus as 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED',
+    adminReviewNote,
+  );
+  if (!found) return res.status(404).json({ error: 'Step result not found.' });
+
+  const result = await db.query(
+    `UPDATE inspection_jobs SET step_results = $2, updated_at = now(), version = version + 1 WHERE external_id = $1 RETURNING *`,
+    [req.params.jobId, toJsonbParam(updatedSteps)],
+  );
+  await db.query(
+    `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
+     VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STEP_MODERATED', $2)`,
+    [
+      job.rows[0].id,
+      toJsonbParam({
+        fieldChanged: `Step ${req.params.stepId} Moderation`,
+        oldValue: previousStatus,
+        newValue: moderationStatus,
+        adminReviewNote,
+      }),
+    ],
+  );
+  res.json(result.rows[0]);
+});
+
 app.post('/api/admin/jobs/:jobId/exports', requireAdmin, async (req, res) => {
   const result = await db.query(
     `UPDATE inspection_jobs
@@ -292,10 +437,53 @@ app.post('/api/admin/jobs/:jobId/sessions', requireAdmin, async (req, res) => {
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const job = await db.query('SELECT id FROM inspection_jobs WHERE external_id = $1', [req.params.jobId]);
   if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
-  await db.query('UPDATE worker_sessions SET revoked_at = now() WHERE job_id = $1 AND revoked_at IS NULL', [job.rows[0].id]);
-  await db.query('INSERT INTO worker_sessions (job_id, token_hash, expires_at) VALUES ($1, $2, $3)', [job.rows[0].id, hashSessionToken(token), expiresAt]);
+  const existing = await db.query(
+    'SELECT token_value, created_at, expires_at FROM worker_sessions WHERE job_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1',
+    [job.rows[0].id],
+  );
+  if (existing.rowCount) {
+    return res.status(409).json({
+      error: 'Session link đã được tạo cho lệnh này. Không được gen lại link; nếu đã hết hạn hãy dùng chức năng gia hạn thời gian.',
+      token: existing.rows[0].token_value || undefined,
+      createdAt: existing.rows[0].created_at instanceof Date ? existing.rows[0].created_at.toISOString() : existing.rows[0].created_at,
+      expiresAt: existing.rows[0].expires_at instanceof Date ? existing.rows[0].expires_at.toISOString() : existing.rows[0].expires_at,
+    });
+  }
+  const session = await db.query(
+    'INSERT INTO worker_sessions (job_id, token_hash, token_value, expires_at) VALUES ($1, $2, $3, $4) RETURNING created_at, expires_at',
+    [job.rows[0].id, hashSessionToken(token), token, expiresAt],
+  );
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'WORKER_SESSION_CREATED')`, [job.rows[0].id]);
-  res.status(201).json({ token, expiresAt: expiresAt.toISOString() });
+  res.status(201).json({
+    token,
+    createdAt: session.rows[0].created_at instanceof Date ? session.rows[0].created_at.toISOString() : session.rows[0].created_at,
+    expiresAt: session.rows[0].expires_at instanceof Date ? session.rows[0].expires_at.toISOString() : session.rows[0].expires_at,
+  });
+});
+
+app.patch('/api/admin/jobs/:jobId/session/extend', requireAdmin, async (req, res) => {
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const job = await db.query('SELECT id FROM inspection_jobs WHERE external_id = $1', [req.params.jobId]);
+  if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  const session = await db.query(
+    `UPDATE worker_sessions
+        SET expires_at = $2
+      WHERE id = (
+        SELECT id FROM worker_sessions
+         WHERE job_id = $1 AND revoked_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1
+      )
+      RETURNING token_value, created_at, expires_at`,
+    [job.rows[0].id, expiresAt],
+  );
+  if (!session.rowCount) return res.status(404).json({ error: 'Session link has not been created for this job.' });
+  await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'WORKER_SESSION_EXTENDED')`, [job.rows[0].id]);
+  res.json({
+    token: session.rows[0].token_value || undefined,
+    createdAt: session.rows[0].created_at instanceof Date ? session.rows[0].created_at.toISOString() : session.rows[0].created_at,
+    expiresAt: session.rows[0].expires_at instanceof Date ? session.rows[0].expires_at.toISOString() : session.rows[0].expires_at,
+  });
 });
 
 app.get('/api/worker-sessions/:jobId', workerSessionGuard, async (_req, res) => {
@@ -328,9 +516,25 @@ app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, step_id, slot_index, mime_type, byte_size, sha256, created_at`,
     [session.job_id, session.id, stepId, Number(slotIndex), req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256],
   );
+  const photoUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
+  const { found, updatedSteps } = attachUploadedPhotoToStepResults(session.step_results, {
+    stepId,
+    slotIndex: Number(slotIndex),
+    photoUrl,
+  });
+  if (found) {
+    await db.query(
+      `UPDATE inspection_jobs
+          SET step_results = $1,
+              updated_at = now(),
+              version = version + 1
+        WHERE id = $2`,
+      [toJsonbParam(updatedSteps), session.job_id],
+    );
+  }
   await enqueuePhotoProcessing(photo.rows[0].id);
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, 'PHOTO_UPLOADED', $3)`, [session.job_id, session.worker_name || 'Worker', toJsonbParam({ photoId: photo.rows[0].id, stepId })]);
-  res.status(201).json(photo.rows[0]);
+  res.status(201).json({ ...photo.rows[0], photoUrl });
 });
 
 app.post('/api/worker-sessions/:jobId/photos/:photoId/analyze', workerSessionGuard, async (req, res) => {
@@ -362,13 +566,42 @@ app.get('/api/worker-sessions/:jobId/analyses/:analysisId', workerSessionGuard, 
   res.json(analysis.rows[0]);
 });
 
+app.post('/api/worker-sessions/:jobId/draft', workerSessionGuard, async (req, res) => {
+  const session = res.locals.workerSession;
+  const { stepResults, workerInfo } = req.body;
+  if (!Array.isArray(stepResults)) return res.status(400).json({ error: 'stepResults must be an array.' });
+  await db.query(
+    `UPDATE inspection_jobs
+        SET step_results = $1,
+            worker_name = COALESCE($2, worker_name), worker_id = COALESCE($3, worker_id),
+            shift = COALESCE($4, shift), line = COALESCE($5, line),
+            updated_at = now(), version = version + 1
+      WHERE id = $6 RETURNING *`,
+    [
+      toJsonbParam(stepResults),
+      workerInfo?.workerName || null,
+      workerInfo?.workerId || null,
+      workerInfo?.shift || null,
+      workerInfo?.line || null,
+      session.job_id,
+    ],
+  );
+  await db.query(
+    `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
+     VALUES ($1, 'WORKER', $2, 'WORKER_DRAFT_SAVED', $3)`,
+    [session.job_id, workerInfo?.workerName || session.worker_name || 'Worker', toJsonbParam({ stepCount: stepResults.length })],
+  );
+  const hydratedJob = await getHydratedJobById(session.job_id);
+  res.json({ job: hydratedJob });
+});
+
 app.post('/api/worker-sessions/:jobId/submit', workerSessionGuard, async (req, res) => {
   const session = res.locals.workerSession;
   const { stepResults, workerInfo } = req.body;
   if (!Array.isArray(stepResults)) return res.status(400).json({ error: 'stepResults must be an array.' });
   const failed = stepResults.some((step) => step?.status === 'FAIL');
   const status = failed ? 'FAILED' : 'COMPLETED';
-  const job = await db.query(
+  await db.query(
     `UPDATE inspection_jobs
         SET step_results = $1, status = $2::qc_job_status, completed_at = now(),
             worker_name = COALESCE($3, worker_name), worker_id = COALESCE($4, worker_id),
@@ -387,7 +620,8 @@ app.post('/api/worker-sessions/:jobId/submit', workerSessionGuard, async (req, r
   );
   await db.query('UPDATE worker_sessions SET submitted_at = now() WHERE id = $1', [session.id]);
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, 'WORKER_SUBMITTED', $3)`, [session.job_id, workerInfo?.workerName || session.worker_name || 'Worker', toJsonbParam({ status })]);
-  res.json({ job: job.rows[0] });
+  const hydratedJob = await getHydratedJobById(session.job_id);
+  res.json({ job: hydratedJob });
 });
 
 const distDirectory = join(process.cwd(), 'dist');

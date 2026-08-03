@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FileCode, FileText, Check, X, Sliders, Upload, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { InspectionStep, DocxMapping } from '../../types/qc';
+import { validateDocxMapping } from '../../utils/docxMapping';
 
 interface DocxMappingModalProps {
   isOpen: boolean;
@@ -26,16 +27,23 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
   const [statusTag, setStatusTag] = useState(step.mapping?.statusTag || `{{status_${step.stepId.toLowerCase()}}}`);
   const [imageWidthMm, setImageWidthMm] = useState(step.mapping?.imageWidthMm || 60);
   const [imageHeightMm, setImageHeightMm] = useState(step.mapping?.imageHeightMm || 45);
+  const [errors, setErrors] = useState<string[]>([]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveMapping(stepIndex, {
-      imageTag,
-      noteTag,
-      statusTag,
+    const mapping = {
+      imageTag: imageTag.trim(),
+      noteTag: noteTag.trim(),
+      statusTag: statusTag.trim(),
       imageWidthMm,
       imageHeightMm
-    });
+    };
+    const nextErrors = validateDocxMapping(mapping);
+    if (nextErrors.length) {
+      setErrors(nextErrors);
+      return;
+    }
+    onSaveMapping(stepIndex, mapping);
     onClose();
   };
 
@@ -75,6 +83,14 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
 
         {/* Body Form */}
         <form onSubmit={handleSave} className="p-6 space-y-5">
+          {errors.length > 0 && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 space-y-1">
+              {errors.map((error) => (
+                <div key={error}>{error}</div>
+              ))}
+            </div>
+          )}
+
           {/* Tag Binding Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Image Placeholder Tag */}

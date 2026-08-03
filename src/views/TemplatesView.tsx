@@ -17,6 +17,7 @@ import { ChecklistTemplate } from '../types/qc';
 import { adminApi } from '../services/adminApi';
 import { TemplateFormModal } from '../components/templates/TemplateFormModal';
 import { TemplatePreviewModal } from '../components/templates/TemplatePreviewModal';
+import { getWordMappingSummary, hasCompleteWordMapping } from '../utils/docxMapping';
 
 export const TemplatesView: React.FC = () => {
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
@@ -217,9 +218,13 @@ export const TemplatesView: React.FC = () => {
                         <span className="font-bold text-slate-800 text-[11px] shrink-0">{step.stepId}:</span>
                         <span className="truncate text-slate-700">{step.title}</span>
                       </div>
-                      <div className="flex items-center gap-1 text-[10px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded shrink-0 border border-blue-200">
+                      <div className={`flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 border ${
+                        hasCompleteWordMapping(step)
+                          ? 'text-blue-700 bg-blue-50 border-blue-200'
+                          : 'text-amber-700 bg-amber-50 border-amber-200'
+                      }`}>
                         <Tag className="w-3 h-3" />
-                        <span>{step.mapping?.imageTag || '{{photo}}'}</span>
+                        <span>{getWordMappingSummary(step)}</span>
                       </div>
                     </div>
                   ))}

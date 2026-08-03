@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ClipboardCheck, Download, RefreshCw, Zap } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { InspectionJob } from '../types/qc';
 import { adminApi } from '../services/adminApi';
 import { InspectionTable } from '../components/inspections/InspectionTable';
 import { InspectionDetailDrawer } from '../components/inspections/InspectionDetailDrawer';
 import { ExportJobSessionModal } from '../components/inspections/ExportJobSessionModal';
+import { copyTextToClipboard } from '../utils/clipboard';
 
 interface InspectionsViewProps {
   selectedJobForReview: InspectionJob | null;
@@ -20,6 +21,7 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
   const [isDrawerOpen, setIsDrawerOpen] = useState(!!selectedJobForReview);
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [quickSessionState, setQuickSessionState] = useState<Record<string, 'generating' | 'copied' | 'error'>>({});
 
   // Session Export Modal State
   const [exportModalJob, setExportModalJob] = useState<InspectionJob | null>(null);
@@ -58,6 +60,52 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
   const handleOpenExportModal = (job: InspectionJob) => {
     setExportModalJob(job);
     setIsExportModalOpen(true);
+  };
+
+  const buildSessionUrl = (jobId: string, token: string) =>
+    `${window.location.origin}${window.location.pathname}?jobSession=${encodeURIComponent(jobId)}&token=${encodeURIComponent(token)}`;
+
+  const handleQuickGenerateSessionUrl = async (job: InspectionJob) => {
+    setQuickSessionState(prev => ({ ...prev, [job.id]: 'generating' }));
+    setLoadError('');
+    try {
+      if (job.sessionCreatedAt) {
+        const isExpired = job.sessionExpiresAt ? new Date(job.sessionExpiresAt).getTime() <= Date.now() : false;
+        if (isExpired) {
+          setQuickSessionState(prev => {
+            const next = { ...prev };
+            delete next[job.id];
+            return next;
+          });
+          handleOpenExportModal(job);
+          return;
+        }
+        if (!job.sessionToken) {
+          setQuickSessionState(prev => ({ ...prev, [job.id]: 'error' }));
+          setLoadError('Link này được tạo trước khi hệ thống lưu token nên không thể copy nhanh. Mở Quản lý link để xem trạng thái hoặc gia hạn khi hết hạn.');
+          handleOpenExportModal(job);
+          return;
+        }
+        await copyTextToClipboard(buildSessionUrl(job.id, job.sessionToken));
+        setQuickSessionState(prev => ({ ...prev, [job.id]: 'copied' }));
+      } else {
+        const session = await adminApi.createWorkerSession(job.id);
+        await copyTextToClipboard(session.sessionUrl);
+        setQuickSessionState(prev => ({ ...prev, [job.id]: 'copied' }));
+        await reloadJobs();
+      }
+      window.setTimeout(() => {
+        setQuickSessionState(prev => {
+          const next = { ...prev };
+          delete next[job.id];
+          return next;
+        });
+      }, 3000);
+    } catch (error) {
+      console.error('Failed to quick generate session URL:', error);
+      setQuickSessionState(prev => ({ ...prev, [job.id]: 'error' }));
+      setLoadError(error instanceof Error ? error.message : 'Không thể tạo và copy link nhanh.');
+    }
   };
 
   const handleCloseDrawer = () => {
@@ -106,6 +154,8 @@ export const InspectionsView: React.FC<InspectionsViewProps> = ({
         jobs={jobs}
         onSelectJob={handleSelectJob}
         onExportSessionUrl={handleOpenExportModal}
+        onQuickGenerateSessionUrl={handleQuickGenerateSessionUrl}
+        quickSessionState={quickSessionState}
         onRefreshData={reloadJobs}
       />
 

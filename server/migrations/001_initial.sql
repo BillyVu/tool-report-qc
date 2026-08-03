@@ -40,6 +40,7 @@ CREATE TABLE worker_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   job_id uuid NOT NULL REFERENCES inspection_jobs(id) ON DELETE CASCADE,
   token_hash char(64) NOT NULL UNIQUE,
+  token_value text,
   expires_at timestamptz NOT NULL,
   revoked_at timestamptz,
   checked_in_at timestamptz,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   X, 
   Link, 
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { InspectionJob } from '../../types/qc';
 import { adminApi } from '../../services/adminApi';
+import { copyTextToClipboard } from '../../utils/clipboard';
 
 interface ExportJobSessionModalProps {
   isOpen: boolean;
@@ -29,26 +30,53 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isExtending, setIsExtending] = useState(false);
   const [error, setError] = useState('');
   const [sessionInfo, setSessionInfo] = useState<{
     sessionUrl: string;
+    createdAt: string;
     expiresAt: string;
     token: string;
   } | null>(null);
+  const [extendedSessionInfo, setExtendedSessionInfo] = useState<{
+    createdAt: string;
+    expiresAt: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSessionInfo(null);
+      setExtendedSessionInfo(null);
+      setCopied(false);
+      setError('');
+    }
+  }, [isOpen, job?.id]);
+
+  const existingSessionUrl = job?.sessionToken
+    ? `${window.location.origin}${window.location.pathname}?jobSession=${encodeURIComponent(job.id)}&token=${encodeURIComponent(job.sessionToken)}`
+    : null;
+  const currentSessionUrl = sessionInfo?.sessionUrl || existingSessionUrl;
+  const createdDate = sessionInfo?.createdAt || extendedSessionInfo?.createdAt || job?.sessionCreatedAt;
+  const expiresDate = sessionInfo?.expiresAt || extendedSessionInfo?.expiresAt || job?.sessionExpiresAt;
+  const hasExistingSession = !!job?.sessionCreatedAt;
+  const isExpired = expiresDate ? new Date(expiresDate).getTime() < Date.now() : false;
+  const remainingLabel = useMemo(() => {
+    if (!expiresDate) return '';
+    const diffMs = new Date(expiresDate).getTime() - Date.now();
+    if (diffMs <= 0) return 'Đã hết hạn';
+    const totalMinutes = Math.floor(diffMs / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `Còn hiệu lực ${hours} giờ ${minutes} phút`;
+  }, [expiresDate]);
 
   if (!isOpen || !job) return null;
 
-  // Generate or retrieve current session URL
-  const currentSessionUrl = sessionInfo?.sessionUrl || (
-    job.sessionToken && job.sessionExpiresAt
-      ? `${window.location.origin}${window.location.pathname}?jobSession=${job.id}&token=${job.sessionToken}`
-      : null
-  );
-
-  const expiresDate = sessionInfo?.expiresAt || job.sessionExpiresAt;
-  const isExpired = expiresDate ? new Date(expiresDate).getTime() < Date.now() : false;
-
   const handleGenerateUrl = async () => {
+    if (hasExistingSession) {
+      setError('Lệnh này đã có session link. Không được gen lại link; hãy gia hạn nếu link đã hết hạn.');
+      return null;
+    }
     setIsGenerating(true);
     setError('');
     try {
@@ -66,15 +94,36 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
     }
   };
 
+  const handleExtendSession = async () => {
+    setIsExtending(true);
+    setError('');
+    try {
+      const res = await adminApi.extendWorkerSession(job.id);
+      setExtendedSessionInfo({ createdAt: res.createdAt, expiresAt: res.expiresAt });
+      setSessionInfo(prev => prev ? { ...prev, createdAt: res.createdAt, expiresAt: res.expiresAt } : null);
+      await onSessionCreated?.();
+    } catch (e) {
+      console.error('Failed to extend session URL:', e);
+      setError(e instanceof Error ? e.message : 'Không thể gia hạn session link từ server.');
+    } finally {
+      setIsExtending(false);
+    }
+  };
+
   const handleCopyLink = async () => {
     let urlToCopy = currentSessionUrl;
     if (!urlToCopy) {
       urlToCopy = await handleGenerateUrl();
     }
     if (urlToCopy) {
-      navigator.clipboard.writeText(urlToCopy);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      try {
+        await copyTextToClipboard(urlToCopy);
+        setCopied(true);
+        setError('');
+        setTimeout(() => setCopied(false), 2500);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Browser đang chặn copy tự động. Hãy bôi đen URL và copy thủ công.');
+      }
     }
   };
 
@@ -88,8 +137,8 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
               <Share2 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white">Xuất URL Lệnh Kiểm Tra</h3>
-              <p className="text-xs text-slate-400">Tạo Session Link độc lập cho công nhân (Giới hạn 24 giờ)</p>
+              <h3 className="font-bold text-base text-white">Quản lý URL Lệnh Kiểm Tra</h3>
+              <p className="text-xs text-slate-400">Gen link lần đầu, copy link hiện có hoặc gia hạn khi hết hạn</p>
             </div>
           </div>
           <button
@@ -122,7 +171,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
             <div>
               <p className="font-bold">Quy tắc Giới hạn 1 Ngày (24 giờ):</p>
               <p className="text-amber-800 mt-0.5">
-                URL này cho phép công nhân mở trực tiếp giao diện nhập kết quả kiểm định. Sau <strong>24 giờ</strong> kể từ thời điểm xuất link, URL sẽ tự động hết hạn và cần QC Admin xuất lại link mới.
+                URL này chỉ được tạo một lần cho mỗi lệnh kiểm tra. Sau <strong>24 giờ</strong>, QC Admin chỉ được gia hạn thời gian cho link hiện có, không gen lại link mới.
               </p>
             </div>
           </div>
@@ -145,10 +194,23 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                   <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
                     isExpired ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-800'
                   }`}>
-                    {isExpired ? 'Đã hết hạn 24h' : `Hết hạn: ${new Date(expiresDate).toLocaleString('vi-VN')}`}
+                    {isExpired ? 'Hết hạn' : remainingLabel}
                   </span>
                 )}
               </div>
+
+              {createdDate && expiresDate && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                    <span className="block text-[11px] font-semibold text-emerald-700">Hiệu lực từ</span>
+                    <span className="font-bold text-emerald-950">{new Date(createdDate).toLocaleString('vi-VN')}</span>
+                  </div>
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <span className="block text-[11px] font-semibold text-amber-700">Hết hạn lúc</span>
+                    <span className="font-bold text-amber-950">{new Date(expiresDate).toLocaleString('vi-VN')}</span>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center gap-2">
                 <input
@@ -159,28 +221,22 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                 />
                 <button
                   onClick={handleCopyLink}
+                  disabled={isExpired}
                   className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
-                    copied 
+                    isExpired
+                      ? 'bg-red-100 text-red-700 border border-red-200 cursor-not-allowed'
+                      : copied
                       ? 'bg-emerald-600 text-white shadow-sm' 
                       : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/20'
                   }`}
                 >
-                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span>{copied ? 'Đã Copy!' : 'Copy Link'}</span>
+                  {isExpired ? <Clock className="w-4 h-4" /> : copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span>{isExpired ? 'Hết hạn' : copied ? 'Đã copy' : 'Copy link'}</span>
                 </button>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-2">
-                <button
-                  onClick={handleGenerateUrl}
-                  disabled={isGenerating}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isGenerating ? 'animate-spin' : ''}`} />
-                  <span>{isGenerating ? 'Đang tạo link...' : 'Tạo lại / Gia hạn 24h mới'}</span>
-                </button>
-
+              <div className="flex items-center justify-between gap-2 pt-2">
                 <a
                   href={currentSessionUrl}
                   target="_blank"
@@ -190,7 +246,57 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                   <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
                   <span>Mở Trực Tiếp Session Portal</span>
                 </a>
+                {isExpired && (
+                  <button
+                    onClick={handleExtendSession}
+                    disabled={isExtending}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-60"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isExtending ? 'animate-spin' : ''}`} />
+                    <span>{isExtending ? 'Đang gia hạn...' : 'Gia hạn 24h'}</span>
+                  </button>
+                )}
               </div>
+            </div>
+          ) : hasExistingSession ? (
+            <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-start gap-2.5 text-xs text-slate-700">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-slate-900">Session link đã được tạo trước đó.</p>
+                  <p className="mt-1">
+                    Link này được tạo trước khi hệ thống lưu token nên không thể copy lại URL cũ từ database. Không được gen lại link mới cho lệnh này.
+                  </p>
+                </div>
+              </div>
+
+              {createdDate && expiresDate && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg border border-emerald-200 bg-white px-3 py-2">
+                    <span className="block text-[11px] font-semibold text-emerald-700">Đã tạo lúc</span>
+                    <span className="font-bold text-emerald-950">{new Date(createdDate).toLocaleString('vi-VN')}</span>
+                  </div>
+                  <div className={`rounded-lg border px-3 py-2 ${isExpired ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-white'}`}>
+                    <span className={`block text-[11px] font-semibold ${isExpired ? 'text-red-700' : 'text-amber-700'}`}>Hết hạn lúc</span>
+                    <span className={`font-bold ${isExpired ? 'text-red-950' : 'text-amber-950'}`}>{new Date(expiresDate).toLocaleString('vi-VN')}</span>
+                  </div>
+                </div>
+              )}
+
+              {isExpired ? (
+                <button
+                  onClick={handleExtendSession}
+                  disabled={isExtending}
+                  className="w-full px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md transition-all inline-flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isExtending ? 'animate-spin' : ''}`} />
+                  <span>{isExtending ? 'Đang gia hạn...' : 'Gia hạn thời gian 24h'}</span>
+                </button>
+              ) : (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                  Link hiện còn hiệu lực. Không cần và không được gen lại link.
+                </div>
+              )}
             </div>
           ) : (
             <div className="py-6 text-center space-y-3 bg-slate-50 border border-dashed border-slate-300 rounded-2xl">
@@ -200,7 +306,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
               <div>
                 <h4 className="font-bold text-slate-800 text-sm">Chưa xuất Session URL cho lệnh này</h4>
                 <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
-                  Bấm nút bên dưới để khởi tạo URL công nhân hoạt động độc lập có thời hạn 24 giờ.
+                  Bấm nút bên dưới để tạo URL lần đầu. Sau khi tạo, link sẽ không được gen lại; nếu hết hạn chỉ được gia hạn thời gian.
                 </p>
               </div>
               <button
@@ -209,7 +315,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                 className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all inline-flex items-center gap-2"
               >
                 <Share2 className="w-4 h-4" />
-                <span>{isGenerating ? 'Đang tạo Session URL...' : 'Xuất URL Phiên Làm Việc (24h)'}</span>
+                <span>{isGenerating ? 'Đang gen link...' : 'Gen link (24h)'}</span>
               </button>
             </div>
           )}

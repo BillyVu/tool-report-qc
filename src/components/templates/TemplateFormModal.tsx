@@ -4,6 +4,7 @@ import { ChecklistTemplate, InspectionStep, DocxMapping } from '../../types/qc';
 import { StepDraggableList } from './StepDraggableList';
 import { DocxMappingModal } from './DocxMappingModal';
 import { TemplatePreviewModal } from './TemplatePreviewModal';
+import { validateTemplateMappings } from '../../utils/docxMapping';
 
 interface TemplateFormModalProps {
   isOpen: boolean;
@@ -508,6 +509,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   const handleFormSubmit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (!title.trim() || !productCode.trim()) return;
+    const mappingErrors = validateTemplateMappings(steps);
+    if (mappingErrors.length) {
+      setSaveError(`Cần kiểm tra mapping Word trước khi lưu: ${mappingErrors.slice(0, 3).join(' ')}`);
+      return;
+    }
     setIsSaving(true);
     setSaveError('');
 
@@ -551,7 +557,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in cursor-pointer"
+        className="qc-builder-shell fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in cursor-pointer"
         onClick={(e) => {
           if (e.target === e.currentTarget) {
             onClose();
@@ -559,11 +565,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
         }}
       >
         <div
-          className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden my-auto cursor-default"
+          className="qc-builder-modal w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden my-auto cursor-default"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="bg-slate-900 text-white p-5 flex items-center justify-between shrink-0">
+          <div className="qc-builder-header text-white p-5 flex items-center justify-between shrink-0">
             <div>
               <h2 className="text-lg font-bold">
                 {isEdit ? 'Chỉnh Sửa Mẫu Checklist QC' : 'Tạo Mẫu Checklist & Cấu Hình Word DOCX Mới'}
@@ -581,18 +587,18 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
           </div>
 
           {/* Form Content */}
-          <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
+          <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#090d16]">
             {saveError && (
-              <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg p-3">
+              <div className="bg-red-950/40 border border-red-500/30 text-red-200 text-xs font-semibold rounded-lg p-3">
                 {saveError}
               </div>
             )}
 
             {/* Template Basic Info */}
-            <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
-              <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-blue-600" />
+            <div className="qc-builder-card space-y-4 p-5">
+              <div className="qc-builder-card-header flex items-center justify-between pb-3">
+                <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-sky-400" />
                   <span>Thông Tin Cơ Bản Mẫu Checklist & File DOCX</span>
                 </h3>
                 <span className="text-[11px] text-slate-400 font-mono">ID: {template?.id || 'Tự động tạo'}</span>
@@ -600,7 +606,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
                     Tên Mẫu Checklist <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -608,13 +614,13 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="Ví dụ: Báo Cáo Kiểm Định Chất Lượng X530 Knobs"
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs"
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
                     Mã Dòng Sản Phẩm <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -622,13 +628,13 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     value={productCode}
                     onChange={(e) => setProductCode(e.target.value)}
                     placeholder="Ví dụ: X530"
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs"
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
                     Tên Dòng Sản Phẩm
                   </label>
                   <input
@@ -636,12 +642,12 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     value={productName}
                     onChange={(e) => setProductName(e.target.value)}
                     placeholder="Ví dụ: X530 Knobs - 117pcs ATT"
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
                     Tên File Word Mẫu (.docx)
                   </label>
                   <input
@@ -649,12 +655,12 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     value={docxTemplateName}
                     onChange={(e) => setDocxTemplateName(e.target.value)}
                     placeholder="X530_Knobs_Inspection_Report.docx"
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
                     Phiên bản Mẫu
                   </label>
                   <input
@@ -662,144 +668,144 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     value={version}
                     onChange={(e) => setVersion(e.target.value)}
                     placeholder="1.0.0"
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs"
                   />
                 </div>
               </div>
 
               {/* Extended Metadata (Client, Supplier, Specs, AQL, Versions) */}
-              <div className="pt-3 border-t border-slate-200/80 space-y-3">
-                <div className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center justify-between">
+              <div className="pt-3 border-t border-slate-700 space-y-3">
+                <div className="text-xs font-bold text-slate-100 flex items-center justify-between">
                   <span>Thông Tin Khách Hàng, Nhà Máy & Quy Chuẩn Báo Cáo (Report Header Specs)</span>
-                  <span className="text-[11px] text-blue-600 font-normal">Trích xuất từ mẫu kiểm định thực tế</span>
+                  <span className="text-[11px] text-sky-400 font-normal">Trích xuất từ mẫu kiểm định thực tế</span>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Khách Hàng (Client):</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Khách Hàng (Client):</label>
                     <input
                       type="text"
                       value={clientName}
                       onChange={(e) => setClientName(e.target.value)}
                       placeholder="ATT (Attn: Ava)"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Nhà Sản Xuất (Supplier):</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Nhà Sản Xuất (Supplier):</label>
                     <input
                       type="text"
                       value={supplierName}
                       onChange={(e) => setSupplierName(e.target.value)}
                       placeholder="EAGLEON (VN) COMPANY LIMITED"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Dịch Vụ (Service Required):</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Dịch Vụ (Service Required):</label>
                     <input
                       type="text"
                       value={serviceRequired}
                       onChange={(e) => setServiceRequired(e.target.value)}
                       placeholder="FQC / FRI (Final Random Inspection)"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Địa Chỉ Nhà Máy (Factory Address):</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Địa Chỉ Nhà Máy (Factory Address):</label>
                     <input
                       type="text"
                       value={supplierLocation}
                       onChange={(e) => setSupplierLocation(e.target.value)}
                       placeholder="Lô CN-A5 CCN Châu Phong, Phù Lãng, Bắc Ninh"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Tiêu Chuẩn Lấy Mẫu AQL:</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Tiêu Chuẩn Lấy Mẫu AQL:</label>
                     <input
                       type="text"
                       value={aqlStandard}
                       onChange={(e) => setAqlStandard(e.target.value)}
                       placeholder="ISO 2859-1 (Single sampling plans)"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Số Lượng Đơn / Thùng:</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Số Lượng Đơn / Thùng:</label>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={orderQty}
                         onChange={(e) => setOrderQty(e.target.value)}
                         placeholder="117 pcs"
-                        className="w-1/2 px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                        className="w-1/2 px-2.5 py-1.5 text-xs"
                       />
                       <input
                         type="text"
                         value={cartonQty}
                         onChange={(e) => setCartonQty(e.target.value)}
                         placeholder="24 cartons"
-                        className="w-1/2 px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                        className="w-1/2 px-2.5 py-1.5 text-xs"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Kích Thước/N.W/G.W Thùng Carton:</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Kích Thước/N.W/G.W Thùng Carton:</label>
                     <input
                       type="text"
                       value={cartonSpec}
                       onChange={(e) => setCartonSpec(e.target.value)}
                       placeholder="310 x 195 x 125 mm | 2758.5g / 3348.7g"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Kích Thước/N.W/G.W Thiết Bị:</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Kích Thước/N.W/G.W Thiết Bị:</label>
                     <input
                       type="text"
                       value={deviceSpec}
                       onChange={(e) => setDeviceSpec(e.target.value)}
                       placeholder="164.22 × 66.59 × 21.91 mm | 201.7g"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">System / Hardware Version:</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">System / Hardware Version:</label>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={systemVersion}
                         onChange={(e) => setSystemVersion(e.target.value)}
                         placeholder="Sys: 15"
-                        className="w-1/2 px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                        className="w-1/2 px-2.5 py-1.5 text-xs"
                       />
                       <input
                         type="text"
                         value={hardwareVersion}
                         onChange={(e) => setHardwareVersion(e.target.value)}
                         placeholder="HW: V1.0"
-                        className="w-1/2 px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                        className="w-1/2 px-2.5 py-1.5 text-xs"
                       />
                     </div>
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Số Hiệu Build (Build Number):</label>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">Số Hiệu Build (Build Number):</label>
                     <input
                       type="text"
                       value={buildNumber}
                       onChange={(e) => setBuildNumber(e.target.value)}
                       placeholder="X53.0-04-15.0-10.30.00"
-                      className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md"
+                      className="w-full px-2.5 py-1.5 text-xs"
                     />
                   </div>
                 </div>
@@ -810,10 +816,10 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
             <div className="space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">
+                  <h3 className="text-sm font-bold text-slate-100">
                     Danh Sách Các Bước Kiểm Tra QC ({steps.length} bước)
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-400">
                     Kéo thả biểu tượng hai hàng chấm để thay đổi thứ tự các bước
                   </p>
                 </div>
@@ -821,7 +827,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                   <button
                     type="button"
                     onClick={handleLoadX530ReportTemplate}
-                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                    className="qc-builder-btn-primary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
                     title="Nạp đầy đủ toàn bộ quy trình kiểm định 10 bước & thông tin báo cáo X530 Knobs từ file DOCX"
                   >
                     <Sparkles className="w-4 h-4 text-blue-200" />
@@ -831,17 +837,17 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                   <button
                     type="button"
                     onClick={handleLoadStandard6Steps}
-                    className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs flex items-center gap-1.5 border border-amber-300 transition-colors"
+                    className="qc-builder-btn-secondary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors"
                     title="Nạp nhanh 6 bước kiểm định điện thoại chuẩn theo đúng ảnh yêu cầu"
                   >
-                    <Sparkles className="w-4 h-4 text-amber-600" />
+                    <Sparkles className="w-4 h-4 text-sky-400" />
                     <span>Nạp 6 Bước Chuẩn</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={handleAddStep}
-                    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 border border-slate-300 transition-colors"
+                    className="qc-builder-btn-secondary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Thêm Bước</span>
@@ -859,14 +865,14 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
           </form>
 
           {/* Footer Actions */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+          <div className="p-4 border-t border-slate-700 bg-[#0f172a] flex items-center justify-between shrink-0">
             <button
               type="button"
               onClick={() => setIsPreviewOpen(true)}
-              className="px-4 py-2 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs flex items-center gap-1.5 transition-colors"
+              className="qc-builder-btn-secondary px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors"
               title="Xem trước giao diện công nhân làm việc với mẫu hiện tại"
             >
-              <Eye className="w-4 h-4 text-amber-600" />
+              <Eye className="w-4 h-4 text-sky-400" />
               <span>Xem Trước Mẫu (Worker Preview)</span>
             </button>
 
@@ -874,7 +880,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors"
+                className="qc-builder-btn-secondary px-4 py-2 rounded-lg text-xs font-semibold transition-colors"
               >
                 Hủy
               </button>
@@ -882,7 +888,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                 type="button"
                 onClick={handleFormSubmit}
                 disabled={isSaving}
-                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+                className="qc-builder-btn-primary px-6 py-2 rounded-lg disabled:bg-slate-600 text-xs font-bold shadow-md shadow-sky-500/20 transition-all flex items-center gap-2"
               >
                 <Check className="w-4 h-4" />
                 <span>{isSaving ? 'Đang lưu database...' : isEdit ? 'Cập Nhật Mẫu Checklist' : 'Tạo Mẫu Mới'}</span>

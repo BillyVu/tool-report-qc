@@ -1,4 +1,4 @@
-import { AuditLogEntry, ChecklistTemplate, DashboardKPI, InspectionJob } from '../types/qc';
+import { AuditLogEntry, ChecklistTemplate, DashboardKPI, InspectionJob, StepModerationStatus } from '../types/qc';
 import { loadStoredAdminApiKey, saveStoredAdminApiKey } from './adminAuth';
 import { mapInspectionJob } from './workerSessionApi';
 
@@ -94,6 +94,13 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       return (payload || []).map(mapInspectionJob);
     },
 
+    async getJob(jobId: string): Promise<InspectionJob> {
+      const row = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}`, {
+        headers: headers(),
+      }));
+      return mapInspectionJob(row);
+    },
+
     async getKpis(): Promise<DashboardKPI> {
       return await expectOk(await fetchImpl('/api/admin/kpis', {
         headers: headers(),
@@ -115,7 +122,7 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       return mapInspectionJob(row);
     },
 
-    async createWorkerSession(jobId: string): Promise<{ sessionUrl: string; expiresAt: string; token: string; isExpired: boolean }> {
+    async createWorkerSession(jobId: string): Promise<{ sessionUrl: string; createdAt: string; expiresAt: string; token: string; isExpired: boolean }> {
       const payload = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/sessions`, {
         method: 'POST',
         headers: headers(),
@@ -124,8 +131,26 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       const pathname = options.pathname ?? window.location.pathname;
       return {
         sessionUrl: `${origin}${pathname}?jobSession=${encodeURIComponent(jobId)}&token=${encodeURIComponent(payload.token)}`,
+        createdAt: payload.createdAt || new Date().toISOString(),
         expiresAt: payload.expiresAt,
         token: payload.token,
+        isExpired: false,
+      };
+    },
+
+    async extendWorkerSession(jobId: string): Promise<{ createdAt: string; expiresAt: string; token?: string; sessionUrl?: string; isExpired: boolean }> {
+      const payload = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/session/extend`, {
+        method: 'PATCH',
+        headers: headers(),
+      }));
+      const origin = options.origin ?? window.location.origin;
+      const pathname = options.pathname ?? window.location.pathname;
+      const token = payload.token || undefined;
+      return {
+        createdAt: payload.createdAt,
+        expiresAt: payload.expiresAt,
+        token,
+        sessionUrl: token ? `${origin}${pathname}?jobSession=${encodeURIComponent(jobId)}&token=${encodeURIComponent(token)}` : undefined,
         isExpired: false,
       };
     },
@@ -144,6 +169,20 @@ export function createAdminApi(options: AdminApiOptions = {}) {
         method: 'PATCH',
         headers: headers(),
         body: JSON.stringify({ note }),
+      }));
+      return mapInspectionJob(row);
+    },
+
+    async moderateJobStep(
+      jobId: string,
+      stepId: string,
+      moderationStatus: StepModerationStatus,
+      adminReviewNote?: string,
+    ): Promise<InspectionJob> {
+      const row = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/step-results/${encodeURIComponent(stepId)}/moderation`, {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ moderationStatus, adminReviewNote }),
       }));
       return mapInspectionJob(row);
     },

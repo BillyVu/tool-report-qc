@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ChecklistTemplate, InspectionJob } from '../../types/qc';
 import { adminApi } from '../../services/adminApi';
+import { copyTextToClipboard } from '../../utils/clipboard';
 
 interface CreateInspectionJobModalProps {
   isOpen: boolean;
@@ -134,9 +135,12 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
 
   const handleCopyLink = () => {
     if (sessionUrl) {
-      navigator.clipboard.writeText(sessionUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
+      void copyTextToClipboard(sessionUrl).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 3000);
+      }).catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : 'Không thể copy link vào clipboard.');
+      });
     }
   };
 

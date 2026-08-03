@@ -58,6 +58,14 @@ interface ApiInspectionJob {
   export_count?: number;
   lastExportedAt?: string | null;
   last_exported_at?: string | null;
+  sessionCreatedAt?: string | null;
+  session_created_at?: string | null;
+  sessionToken?: string | null;
+  session_token?: string | null;
+  sessionExpiresAt?: string | null;
+  session_expires_at?: string | null;
+  sessionRevokedAt?: string | null;
+  session_revoked_at?: string | null;
 }
 
 function tokenQuery(token: string) {
@@ -96,6 +104,10 @@ export function mapInspectionJob(row: ApiInspectionJob): InspectionJob {
     adminNotes: row.adminNotes || row.admin_notes || undefined,
     exportCount: row.exportCount ?? row.export_count,
     lastExportedAt: row.lastExportedAt || row.last_exported_at || undefined,
+    sessionToken: row.sessionToken || row.session_token || undefined,
+    sessionCreatedAt: row.sessionCreatedAt || row.session_created_at || undefined,
+    sessionExpiresAt: row.sessionExpiresAt || row.session_expires_at || undefined,
+    sessionRevokedAt: row.sessionRevokedAt || row.session_revoked_at || undefined,
   };
 }
 
@@ -152,6 +164,25 @@ export function createWorkerSessionApi(options: WorkerSessionApiOptions = {}) {
       });
       await expectOk(response);
       return true;
+    },
+
+    async saveDraftResults(
+      jobId: string,
+      token: string,
+      stepResults: StepResult[],
+      workerInfo: WorkerInfo,
+    ): Promise<{ success: boolean; message: string; job?: InspectionJob }> {
+      const response = await fetchImpl(`/api/worker-sessions/${encodeURIComponent(jobId)}/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, stepResults, workerInfo }),
+      });
+      const payload = await expectOk(response);
+      return {
+        success: true,
+        message: 'Đã lưu nháp kết quả kiểm tra. Chưa nộp chính thức.',
+        job: mapInspectionJob(payload.job),
+      };
     },
 
     async submitResults(
