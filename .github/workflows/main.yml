@@ -1,0 +1,104 @@
+name: Main
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create. Leave empty to use auto tag vYYYYMMDD-HHMMSS.'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark the generated release as prerelease.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: main-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Validate Docker Compose
+        env:
+          POSTGRES_PASSWORD: dummy
+          QC_ADMIN_API_KEY: dummy
+          RABBITMQ_PASSWORD: dummy
+          GEMINI_API_KEY: dummy
+        run: docker compose config
+
+  release:
+    name: Create release for VPS watcher
+    runs-on: ubuntu-latest
+    needs: verify
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute release tag
+        id: release_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="v$(date -u +%Y%m%d-%H%M%S)"
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+          PRERELEASE: ${{ github.event.inputs.prerelease || 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_flags=()
+          if [ "$PRERELEASE" = "true" ]; then
+            release_flags+=(--prerelease)
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --notes "Automated release for VPS watcher deployment from ${GITHUB_SHA}." \
+            "${release_flags[@]}"
+
+      - name: Deployment handoff
+        run: |
+          echo "Release ${{ steps.release_tag.outputs.tag }} created."
+          echo "The VPS systemd timer tool-report-qc-release-updater.timer scans GitHub Releases and deploys new tags."
