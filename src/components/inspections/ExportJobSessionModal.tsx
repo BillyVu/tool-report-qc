@@ -31,6 +31,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExtending, setIsExtending] = useState(false);
+  const [extensionHours, setExtensionHours] = useState<1 | 2 | 4>(1);
   const [error, setError] = useState('');
   const [sessionInfo, setSessionInfo] = useState<{
     sessionUrl: string;
@@ -41,6 +42,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   const [extendedSessionInfo, setExtendedSessionInfo] = useState<{
     createdAt: string;
     expiresAt: string;
+    token?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
       setSessionInfo(null);
       setExtendedSessionInfo(null);
       setCopied(false);
+      setExtensionHours(1);
       setError('');
     }
   }, [isOpen, job?.id]);
@@ -55,7 +58,10 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   const existingSessionUrl = job?.sessionToken
     ? `${window.location.origin}${window.location.pathname}?jobSession=${encodeURIComponent(job.id)}&token=${encodeURIComponent(job.sessionToken)}`
     : null;
-  const currentSessionUrl = sessionInfo?.sessionUrl || existingSessionUrl;
+  const extendedSessionUrl = extendedSessionInfo?.token && job
+    ? `${window.location.origin}${window.location.pathname}?jobSession=${encodeURIComponent(job.id)}&token=${encodeURIComponent(extendedSessionInfo.token)}`
+    : null;
+  const currentSessionUrl = sessionInfo?.sessionUrl || extendedSessionUrl || existingSessionUrl;
   const createdDate = sessionInfo?.createdAt || extendedSessionInfo?.createdAt || job?.sessionCreatedAt;
   const expiresDate = sessionInfo?.expiresAt || extendedSessionInfo?.expiresAt || job?.sessionExpiresAt;
   const hasExistingSession = !!job?.sessionCreatedAt;
@@ -98,8 +104,8 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
     setIsExtending(true);
     setError('');
     try {
-      const res = await adminApi.extendWorkerSession(job.id);
-      setExtendedSessionInfo({ createdAt: res.createdAt, expiresAt: res.expiresAt });
+      const res = await adminApi.extendWorkerSession(job.id, extensionHours);
+      setExtendedSessionInfo({ createdAt: res.createdAt, expiresAt: res.expiresAt, token: res.token });
       setSessionInfo(prev => prev ? { ...prev, createdAt: res.createdAt, expiresAt: res.expiresAt } : null);
       await onSessionCreated?.();
     } catch (e) {
@@ -128,15 +134,15 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-100 flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-2 animate-fadeIn sm:items-center sm:p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[96dvh] overflow-hidden border border-slate-100 flex flex-col">
         {/* Modal Header */}
-        <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="p-4 bg-slate-900 text-white flex items-start justify-between gap-3 sm:p-5">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
               <Share2 className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="font-bold text-base text-white">Quản lý URL Lệnh Kiểm Tra</h3>
               <p className="text-xs text-slate-400">Gen link lần đầu, copy link hiện có hoặc gia hạn khi hết hạn</p>
             </div>
@@ -150,15 +156,15 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-5">
+        <div className="p-4 space-y-5 overflow-y-auto sm:p-6">
           {/* Job Summary Banner */}
-          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs">
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex flex-col gap-3 text-xs sm:flex-row sm:items-center sm:justify-between">
             <div>
               <span className="font-semibold text-slate-500 block">Lệnh / Lô hàng:</span>
               <span className="font-bold text-slate-800 text-sm">{job.batchNumber}</span>
               <span className="text-slate-500 block mt-0.5">{job.productName} ({job.productCode})</span>
             </div>
-            <div className="text-right">
+            <div className="sm:text-right">
               <span className="font-medium text-slate-500 block">Tổ / Chuyền:</span>
               <span className="font-bold text-blue-700">{job.line}</span>
               <span className="text-slate-500 block mt-0.5">{job.shift}</span>
@@ -185,7 +191,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
           {/* URL Box or Action */}
           {currentSessionUrl ? (
             <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
                 <span className="font-bold text-slate-700 flex items-center gap-1.5">
                   <Link className="w-4 h-4 text-blue-600" />
                   URL Session Lệnh Kiểm Tra:
@@ -194,7 +200,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                   <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
                     isExpired ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-800'
                   }`}>
-                    {isExpired ? 'Hết hạn' : remainingLabel}
+                    {isExpired ? 'Hết hạn sử dụng' : remainingLabel}
                   </span>
                 )}
               </div>
@@ -212,17 +218,17 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input
                   type="text"
                   readOnly
                   value={currentSessionUrl}
-                  className="flex-1 bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none select-all"
+                  className="min-w-0 flex-1 bg-slate-100 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none select-all"
                 />
                 <button
                   onClick={handleCopyLink}
                   disabled={isExpired}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 ${
                     isExpired
                       ? 'bg-red-100 text-red-700 border border-red-200 cursor-not-allowed'
                       : copied
@@ -231,29 +237,51 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                   }`}
                 >
                   {isExpired ? <Clock className="w-4 h-4" /> : copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span>{isExpired ? 'Hết hạn' : copied ? 'Đã copy' : 'Copy link'}</span>
+                  <span>{isExpired ? 'Hết hạn sử dụng' : copied ? 'Đã copy' : 'Copy link'}</span>
                 </button>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center justify-between gap-2 pt-2">
+              {hasExistingSession && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <span className="block text-[11px] font-bold text-amber-900 mb-2">Gia hạn thêm thời gian</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([1, 2, 4] as const).map((hours) => (
+                      <button
+                        key={hours}
+                        type="button"
+                        onClick={() => setExtensionHours(hours)}
+                        className={`px-3 py-2 rounded-lg border text-xs font-bold transition-colors ${
+                          extensionHours === hours
+                            ? 'bg-amber-600 text-white border-amber-600'
+                            : 'bg-white text-amber-800 border-amber-200 hover:bg-amber-100'
+                        }`}
+                      >
+                        {hours} giờ
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-2 pt-2 sm:flex sm:items-center sm:justify-between">
                 <a
                   href={currentSessionUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200"
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-slate-200"
                 >
                   <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
                   <span>Mở Trực Tiếp Session Portal</span>
                 </a>
-                {isExpired && (
+                {hasExistingSession && (
                   <button
                     onClick={handleExtendSession}
                     disabled={isExtending}
-                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-60"
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isExtending ? 'animate-spin' : ''}`} />
-                    <span>{isExtending ? 'Đang gia hạn...' : 'Gia hạn 24h'}</span>
+                    <span>{isExtending ? 'Đang gia hạn...' : `Gia hạn ${extensionHours} giờ`}</span>
                   </button>
                 )}
               </div>
@@ -263,7 +291,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
               <div className="flex items-start gap-2.5 text-xs text-slate-700">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-bold text-slate-900">Session link đã được tạo trước đó.</p>
+                  <p className="font-bold text-slate-900">Link cũ không copy được.</p>
                   <p className="mt-1">
                     Link này được tạo trước khi hệ thống lưu token nên không thể copy lại URL cũ từ database. Không được gen lại link mới cho lệnh này.
                   </p>
@@ -283,20 +311,33 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                 </div>
               )}
 
-              {isExpired ? (
+              <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <span className="block text-[11px] font-bold text-amber-900">Gia hạn thêm thời gian</span>
+                <div className="grid grid-cols-3 gap-2">
+                  {([1, 2, 4] as const).map((hours) => (
+                    <button
+                      key={hours}
+                      type="button"
+                      onClick={() => setExtensionHours(hours)}
+                      className={`px-3 py-2 rounded-lg border text-xs font-bold transition-colors ${
+                        extensionHours === hours
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-white text-amber-800 border-amber-200 hover:bg-amber-100'
+                      }`}
+                    >
+                      {hours} giờ
+                    </button>
+                  ))}
+                </div>
                 <button
                   onClick={handleExtendSession}
                   disabled={isExtending}
                   className="w-full px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md transition-all inline-flex items-center justify-center gap-2 disabled:opacity-60"
                 >
                   <RefreshCw className={`w-4 h-4 ${isExtending ? 'animate-spin' : ''}`} />
-                  <span>{isExtending ? 'Đang gia hạn...' : 'Gia hạn thời gian 24h'}</span>
+                  <span>{isExtending ? 'Đang gia hạn...' : `Gia hạn thêm ${extensionHours} giờ`}</span>
                 </button>
-              ) : (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
-                  Link hiện còn hiệu lực. Không cần và không được gen lại link.
-                </div>
-              )}
+              </div>
             </div>
           ) : (
             <div className="py-6 text-center space-y-3 bg-slate-50 border border-dashed border-slate-300 rounded-2xl">

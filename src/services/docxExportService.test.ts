@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getEvidenceCountText, getStepApprovalDisplay, getStepEvidenceSlots, getStepReportImages } from './docxExportService';
+import { getEvidenceCountText, getStepApprovalDisplay, getStepEvidenceSlots, getStepReportImages, resolveEvidenceImageUrl } from './docxExportService';
 import { InspectionStep, StepResult } from '../types/qc';
 
 test('docx export collects multi-slot worker photos before legacy photo fields', () => {
@@ -102,4 +102,19 @@ test('docx export keeps evidence aligned to each expected test slot', () => {
     { label: 'Danh sách Bluetooth Paired', url: undefined },
     { label: 'Màn hình File Transfer Sample (1pcs)', url: undefined },
   ]);
+});
+
+test('docx export routes submitted upload photos through the admin evidence endpoint', () => {
+  (globalThis as unknown as { window: { location: { origin: string } } }).window = {
+    location: { origin: 'https://qc.apexdev.website' },
+  };
+
+  assert.equal(
+    resolveEvidenceImageUrl('JOB-001', '/uploads/evidence photo.png'),
+    '/api/admin/jobs/JOB-001/photos/evidence%20photo.png',
+  );
+  assert.equal(
+    resolveEvidenceImageUrl('JOB-001', 'data:image/png;base64,abc'),
+    'data:image/png;base64,abc',
+  );
 });

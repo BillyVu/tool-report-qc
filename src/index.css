@@ -1,5 +1,34 @@
 @import "tailwindcss";
 
+html {
+  min-width: 320px;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow-x: hidden;
+  background: #f8fafc;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+img,
+video,
+canvas {
+  max-width: 100%;
+}
+
 .qc-builder-shell {
   --qc-bg-body: #090d16;
   --qc-bg-panel: #0f172a;
@@ -178,5 +207,16 @@
   .qc-builder-ref-thumb {
     width: 100%;
     height: 140px;
+  }
+}
+
+@media (max-width: 640px) {
+  .qc-builder-slot-row {
+    grid-template-columns: 1fr;
+  }
+
+  .qc-builder-slot-row .slot-type,
+  .qc-builder-slot-row .slot-required {
+    grid-column: auto;
   }
 }

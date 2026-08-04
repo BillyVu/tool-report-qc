@@ -240,11 +240,11 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <select
                   value={currentJob.status}
                   onChange={(e) => handleStatusChange(e.target.value as InspectionJob['status'])}
-                  className="h-9 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  className="h-9 min-w-0 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
                   title="Đổi trạng thái lô QC"
                 >
                   <option value="COMPLETED">COMPLETED - ĐẠT</option>
@@ -254,7 +254,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                 <button
                   onClick={handleExportDocx}
                   disabled={isExporting}
-                  className="h-9 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
+                  className="h-9 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                   <span>{isExporting ? 'Đang xuất...' : 'Tải Word'}</span>
@@ -270,8 +270,8 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
             </button>
           </div>
 
-          <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
-            <aside className="min-h-0 border-r border-slate-200 bg-white flex flex-col">
+          <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[320px_minmax(0,1fr)]">
+            <aside className="max-h-[32dvh] min-h-0 border-b border-slate-200 bg-white flex flex-col lg:max-h-none lg:border-b-0 lg:border-r">
               <div className="border-b border-slate-200 p-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -353,7 +353,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
               )}
             </aside>
 
-            <main className="min-h-0 overflow-y-auto bg-slate-100">
+            <main className="min-h-0 flex-1 overflow-y-auto bg-slate-100">
               <div className="mx-auto max-w-6xl space-y-4 p-4 lg:p-5">
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_420px]">
                   <section className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -627,7 +627,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                 <span>Xuất Word: <strong className="text-slate-900">{currentJob.exportCount || 0}</strong> lần</span>
                 <span>Cập nhật: {formatDateTime(currentJob.updatedAt)}</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <button
                   type="button"
                   onClick={() => handleModerateStep(activeStep.stepId, 'REJECTED')}

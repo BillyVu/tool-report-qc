@@ -30,8 +30,10 @@ services:
       PGDATABASE: ${POSTGRES_DB:-tool_report_qc}
       QC_ADMIN_API_KEY: ${QC_ADMIN_API_KEY:?Set QC_ADMIN_API_KEY in .env}
       UPLOADS_DIR: /var/lib/tool-report-qc/uploads
+      DOCX_TEMPLATES_DIR: /var/lib/tool-report-qc/templates
     volumes:
       - /srv/tool-report-qc/uploads:/var/lib/tool-report-qc/uploads
+      - /srv/tool-report-qc/templates:/var/lib/tool-report-qc/templates:ro
     ports:
       - "127.0.0.1:3020:3000"
     networks:

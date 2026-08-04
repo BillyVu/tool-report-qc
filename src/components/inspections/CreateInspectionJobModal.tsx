@@ -147,16 +147,16 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-2 bg-slate-900/60 backdrop-blur-sm animate-fadeIn sm:items-center sm:p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full max-h-[96dvh] overflow-hidden border border-slate-200 flex flex-col">
         
         {/* Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="px-4 py-4 bg-slate-900 text-white flex items-start justify-between gap-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-500/40 text-blue-400 flex items-center justify-center">
               <PlusCircle className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="font-bold text-base text-white">Tạo Lệnh Kiểm Tra QC Mới</h3>
               <p className="text-xs text-slate-400">Khởi tạo đợt kiểm định lô hàng & xuất Link cho công nhân</p>
             </div>
@@ -171,7 +171,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
 
         {/* Content Body */}
         {!createdJob ? (
-          <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+          <form onSubmit={handleSubmit} className="p-4 space-y-4 overflow-y-auto sm:p-6">
             {errorMessage && (
               <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-xl p-3">
                 {errorMessage}. Kiểm tra Admin API Key trong mục Cài đặt.
@@ -202,7 +202,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
 
             {/* Batch / Job Number */}
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex flex-col gap-1 mb-1 sm:flex-row sm:items-center sm:justify-between">
                 <label className="text-xs font-bold text-slate-700">
                   Mã Lệnh / Lô Hàng (Batch Number) <span className="text-red-500">*</span>
                 </label>
@@ -305,7 +305,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
             </div>
 
             {/* Submit Button */}
-            <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-200">
+            <div className="pt-2 grid grid-cols-1 gap-2 border-t border-slate-200 sm:flex sm:items-center sm:justify-end">
               <button
                 type="button"
                 onClick={onClose}
@@ -316,7 +316,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
               <button
                 type="submit"
                 disabled={isSubmitting || isLoadingTemplates || templates.length === 0}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2"
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
               >
                 <ClipboardCheck className="w-4 h-4" />
                 <span>{isSubmitting ? 'Đang lưu database...' : 'Khởi Tạo Lệnh Kiểm Tra'}</span>
@@ -325,7 +325,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
           </form>
         ) : (
           /* SUCCESS STEP: Display Job Details & Session Link */
-          <div className="p-6 space-y-5 animate-fadeIn">
+          <div className="p-4 space-y-5 animate-fadeIn overflow-y-auto sm:p-6">
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
               <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 font-bold">
                 ✓
@@ -348,16 +348,16 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
                 <span className="text-[11px] text-slate-400 font-mono">24h Session URL</span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input
                   type="text"
                   readOnly
                   value={sessionUrl}
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none select-all"
+                  className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none select-all"
                 />
                 <button
                   onClick={handleCopyLink}
-                  className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                  className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
                     copied
                       ? 'bg-emerald-600 text-white'
                       : 'bg-blue-600 hover:bg-blue-500 text-white'

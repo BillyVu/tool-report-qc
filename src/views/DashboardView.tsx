@@ -68,17 +68,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Theo dõi tiến độ thu thập dữ liệu ảnh từ xưởng sản xuất theo thời gian thực và quản lý xuất báo cáo Word.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="grid w-full grid-cols-1 gap-2 sm:w-auto sm:grid-cols-2">
           <button
             onClick={() => onNavigateTab('templates')}
-            className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-2"
+            className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
           >
             <FileCheck2 className="w-4 h-4 text-slate-500" />
             <span>Cấu hình Mẫu Word</span>
           </button>
           <button
             onClick={() => onNavigateTab('inspections')}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
           >
             <ClipboardList className="w-4 h-4" />
             <span>Quản lý Tất cả Lô QC ({kpis.totalJobs})</span>
@@ -202,7 +202,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Recent Activity Table */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-5 border-b border-slate-200 flex items-center justify-between">
+        <div className="p-5 border-b border-slate-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-900">
               Nhật ký Lệnh Kiểm Tra QC Mới Nhất
@@ -221,7 +221,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-sm">
+          <table className="w-full min-w-[760px] text-left border-collapse text-sm">
             <thead>
               <tr className="bg-slate-50 text-slate-500 font-bold text-xs uppercase border-b border-slate-200">
                 <th className="py-3.5 px-4">Mã Lệnh & Lô</th>
@@ -296,7 +296,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

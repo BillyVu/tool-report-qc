@@ -173,9 +173,9 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
           : false;
         const hasCopyableSession = hasSession && !isSessionExpired && !!row.original.sessionToken;
         const hasLegacySession = hasSession && !isSessionExpired && !row.original.sessionToken;
-        const defaultLabel = isSessionExpired ? 'Hết hạn' : hasCopyableSession ? 'Copy link' : hasLegacySession ? 'Quản lý link' : 'Gen link';
+        const defaultLabel = isSessionExpired ? 'Hết hạn sử dụng' : hasCopyableSession ? 'Copy link' : hasLegacySession ? 'Link cũ' : 'Gen link';
         return (
-          <div className="flex items-center justify-end gap-1.5">
+          <div className="flex min-w-[360px] flex-wrap items-center justify-end gap-1.5">
             {onQuickGenerateSessionUrl && (
               <button
                 onClick={async (e) => {
@@ -196,7 +196,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
                         ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
                         : 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
                 }`}
-                title={isSessionExpired ? 'Link đã hết hạn. Mở quản lý link để gia hạn.' : hasCopyableSession ? 'Copy session link hiện có' : hasLegacySession ? 'Link cũ thiếu token lưu trữ. Mở quản lý link để xử lý.' : 'Tạo session link lần đầu 24h và copy ngay vào clipboard'}
+                title={isSessionExpired ? 'Link đã hết hạn. Mở quản lý link để gia hạn.' : hasCopyableSession ? 'Copy session link hiện có' : hasLegacySession ? 'Link cũ thiếu token nên không copy nhanh được. Mở quản lý link để xem trạng thái.' : 'Tạo session link lần đầu 24h và copy ngay vào clipboard'}
               >
                 {quickState === 'generating' ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -281,10 +281,10 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden space-y-4">
       {/* Table Filters Topbar */}
-      <div className="p-4 border-b border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4 bg-slate-50/50">
-        <div className="flex items-center gap-3 w-full md:w-auto flex-1">
+      <div className="p-4 border-b border-slate-200 flex flex-col gap-4 bg-slate-50/50 xl:flex-row xl:items-center xl:justify-between">
+        <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:flex xl:w-auto xl:flex-1 xl:items-center">
           {/* Global Search Input */}
-          <div className="relative flex-1 max-w-md">
+          <div className="relative sm:col-span-2 xl:col-span-1 xl:max-w-md xl:flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -311,7 +311,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
           <select
             value={productCodeFilter}
             onChange={(e) => setProductCodeFilter(e.target.value)}
-            className="px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-medium hidden sm:block"
+            className="px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-medium"
           >
             <option value="ALL">Tất cả Dòng Sản Phẩm</option>
             {uniqueProductCodes.map(code => (
@@ -323,7 +323,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
         {onRefreshData && (
           <button
             onClick={onRefreshData}
-            className="p-2 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-200 transition-colors"
+            className="self-end p-2 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-200 transition-colors xl:self-auto"
             title="Làm mới dữ liệu từ xưởng"
           >
             <RefreshCw className="w-4 h-4" />
@@ -333,7 +333,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
 
       {/* Main Table Grid */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse text-xs">
+        <table className="w-full min-w-[980px] text-left border-collapse text-xs">
           <thead>
             {table.getHeaderGroups().map(headerGroup => (
               <tr key={headerGroup.id} className="bg-slate-50 text-slate-500 font-bold uppercase border-b border-slate-200">
@@ -374,7 +374,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
       </div>
 
       {/* Pagination Footer */}
-      <div className="p-4 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+      <div className="p-4 border-t border-slate-200 flex flex-col gap-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
         <div>
           Trang <strong>{table.getState().pagination.pageIndex + 1}</strong> / <strong>{table.getPageCount() || 1}</strong> (Tổng <strong>{filteredData.length}</strong> bản ghi)
         </div>

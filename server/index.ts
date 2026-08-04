@@ -13,13 +13,16 @@ import { enqueueGeminiAnalysis } from './geminiOutbox.js';
 import { toJsonbParam } from './jsonParam.js';
 import { serializeTemplateRow, templateDbParams } from './templates.js';
 import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, moderateStepResults, updateJobStatusSql } from './adminJobs.js';
+import { buildX530CustomerReport, isCustomerDocxTemplate } from './customerDocx.js';
 
 const port = Number(process.env.PORT || 3000);
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
+const docxTemplatesDirectory = process.env.DOCX_TEMPLATES_DIR || '/srv/tool-report-qc/templates';
 const adminApiKey = process.env.QC_ADMIN_API_KEY;
 
 if (!adminApiKey) throw new Error('QC_ADMIN_API_KEY is required');
 mkdirSync(uploadsDirectory, { recursive: true });
+mkdirSync(docxTemplatesDirectory, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -292,6 +295,71 @@ app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
   });
 });
 
+app.get('/api/admin/jobs/:jobId/customer-report.docx', requireAdmin, async (req, res) => {
+  const result = await db.query(
+    `SELECT j.id, j.external_id, j.batch_number, j.worker_name, j.created_at, j.template_snapshot,
+            COALESCE(
+              jsonb_agg(
+                jsonb_build_object(
+                  'step_id', ep.step_id,
+                  'slot_index', ep.slot_index,
+                  'storage_path', ep.storage_path,
+                  'created_at', ep.created_at
+                ) ORDER BY ep.step_id, ep.slot_index, ep.created_at
+              ) FILTER (WHERE ep.id IS NOT NULL),
+              '[]'::jsonb
+            ) AS evidence_photos
+       FROM inspection_jobs j
+       LEFT JOIN evidence_photos ep ON ep.job_id = j.id
+      WHERE j.external_id = $1
+      GROUP BY j.id`,
+    [req.params.jobId],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Job not found.' });
+
+  const job = result.rows[0];
+  if (!isCustomerDocxTemplate(job.template_snapshot?.docxTemplateName)) {
+    return res.status(409).json({ error: 'Lệnh QC này không sử dụng mẫu DOCX khách hàng được hỗ trợ.' });
+  }
+
+  try {
+    const report = await buildX530CustomerReport({
+      templateDirectory: docxTemplatesDirectory,
+      uploadsDirectory,
+      job,
+      photos: job.evidence_photos,
+    });
+    const filename = `[ATT_X530_Inspection_Report]_${job.external_id}.docx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(report);
+  } catch (error) {
+    console.error('Could not build customer DOCX report:', error);
+    res.status(500).json({ error: 'Không thể tạo báo cáo theo mẫu DOCX khách hàng.' });
+  }
+});
+
+app.get('/api/admin/jobs/:jobId/photos/:storagePath', requireAdmin, async (req, res) => {
+  const photo = await db.query(
+    `SELECT ep.storage_path, ep.mime_type, ep.original_filename
+       FROM evidence_photos ep
+       JOIN inspection_jobs j ON j.id = ep.job_id
+      WHERE j.external_id = $1 AND ep.storage_path = $2`,
+    [req.params.jobId, req.params.storagePath],
+  );
+  if (!photo.rowCount) return res.status(404).json({ error: 'Evidence photo not found.' });
+
+  const storagePath = photo.rows[0].storage_path;
+  if (storagePath.includes('/') || storagePath.includes('\\')) {
+    return res.status(400).json({ error: 'Invalid evidence photo path.' });
+  }
+
+  const filePath = join(uploadsDirectory, storagePath);
+  res.setHeader('Content-Type', photo.rows[0].mime_type);
+  res.setHeader('Content-Disposition', `inline; filename="${photo.rows[0].original_filename || storagePath}"`);
+  res.sendFile(filePath);
+});
+
 app.get('/api/admin/kpis', requireAdmin, async (_req, res) => {
   const result = await db.query(
     `SELECT
@@ -462,7 +530,9 @@ app.post('/api/admin/jobs/:jobId/sessions', requireAdmin, async (req, res) => {
 });
 
 app.patch('/api/admin/jobs/:jobId/session/extend', requireAdmin, async (req, res) => {
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  const requestedHours = Number(req.body?.hours ?? 1);
+  const extensionHours = [1, 2, 4].includes(requestedHours) ? requestedHours : 1;
+  const expiresAt = new Date(Date.now() + extensionHours * 60 * 60 * 1000);
   const job = await db.query('SELECT id FROM inspection_jobs WHERE external_id = $1', [req.params.jobId]);
   if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
   const session = await db.query(
@@ -483,6 +553,7 @@ app.patch('/api/admin/jobs/:jobId/session/extend', requireAdmin, async (req, res
     token: session.rows[0].token_value || undefined,
     createdAt: session.rows[0].created_at instanceof Date ? session.rows[0].created_at.toISOString() : session.rows[0].created_at,
     expiresAt: session.rows[0].expires_at instanceof Date ? session.rows[0].expires_at.toISOString() : session.rows[0].expires_at,
+    extensionHours,
   });
 });
 

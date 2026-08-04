@@ -15,7 +15,7 @@ import {
 } from 'docx';
 import saveAs from 'file-saver';
 import { InspectionJob, ChecklistTemplate, StepResult, InspectionStep } from '../types/qc';
-import { adminApi } from './adminApi';
+import { adminApi, getAdminApiKey } from './adminApi';
 
 type ExportImageType = 'png' | 'jpg' | 'gif' | 'bmp';
 type SourceImageType = ExportImageType | 'webp';
@@ -33,6 +33,7 @@ interface StepImageBuffer {
 
 const SUPPORTED_IMAGE_TYPES = new Set<ExportImageType>(['png', 'jpg', 'gif', 'bmp']);
 const SUPPORTED_SOURCE_IMAGE_TYPES = new Set<SourceImageType>(['png', 'jpg', 'gif', 'bmp', 'webp']);
+const X530_CUSTOMER_TEMPLATE_NAME = 'X530 Knobs_Inspection Report 100-70-260722-117pcs_ATT.docx';
 
 function normalizeImageType(rawType?: string | null): SourceImageType | null {
   const normalized = (rawType || '').toLowerCase().replace(/^image\//, '').replace('jpeg', 'jpg');
@@ -54,6 +55,22 @@ function resolveImageUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+export function resolveEvidenceImageUrl(jobId: string, url: string): string {
+  if (url.startsWith('data:image')) return url;
+  try {
+    const parsedUrl = new URL(url, window.location.origin);
+    if (parsedUrl.origin === window.location.origin && parsedUrl.pathname.startsWith('/uploads/')) {
+      const filename = parsedUrl.pathname.split('/').filter(Boolean).pop();
+      if (filename) {
+        return `/api/admin/jobs/${encodeURIComponent(jobId)}/photos/${encodeURIComponent(decodeURIComponent(filename))}`;
+      }
+    }
+  } catch {
+    return url;
+  }
+  return url;
 }
 
 function mmToDocxPx(value: number | undefined, fallback: number): number {
@@ -205,7 +222,7 @@ function buildMissingEvidenceParagraph(label: string): Paragraph {
 /**
  * Helper to convert data URL or external image URL to Uint8Array for docx ImageRun
  */
-async function fetchImageBuffer(url?: string): Promise<{ data: Uint8Array; type: SourceImageType | null } | null> {
+async function fetchImageBuffer(url?: string, headers?: HeadersInit): Promise<{ data: Uint8Array; type: SourceImageType | null } | null> {
   const resolvedUrl = url ? resolveImageUrl(url) : '';
   if (!resolvedUrl) return null;
   try {
@@ -221,7 +238,7 @@ async function fetchImageBuffer(url?: string): Promise<{ data: Uint8Array; type:
       }
       return { data: bytes, type: getImageTypeFromUrl(resolvedUrl) };
     }
-    const res = await fetch(resolvedUrl, { cache: 'no-store' });
+    const res = await fetch(resolvedUrl, { cache: 'no-store', headers, credentials: 'same-origin' });
     if (!res.ok) return null;
     const arrayBuf = await res.arrayBuffer();
     return {
@@ -270,8 +287,11 @@ async function convertImageBufferToPng(data: Uint8Array, mimeType: string): Prom
   }
 }
 
-async function fetchImageForDocx(url: string, type: SourceImageType | null): Promise<{ data: Uint8Array; type: ExportImageType } | null> {
-  const image = await fetchImageBuffer(url);
+async function fetchImageForDocx(jobId: string, url: string, type: SourceImageType | null): Promise<{ data: Uint8Array; type: ExportImageType } | null> {
+  const exportUrl = resolveEvidenceImageUrl(jobId, url);
+  const adminKey = getAdminApiKey();
+  const adminHeaders = exportUrl.startsWith('/api/admin/') && adminKey ? { 'x-qc-admin-key': adminKey } : undefined;
+  const image = await fetchImageBuffer(exportUrl, adminHeaders) || (exportUrl !== url ? await fetchImageBuffer(url) : null);
   if (!image) return null;
   const resolvedType = type || image.type;
   if (!resolvedType) return null;
@@ -292,6 +312,13 @@ async function fetchImageForDocx(url: string, type: SourceImageType | null): Pro
 export async function generateDocxReport(job: InspectionJob, template?: ChecklistTemplate): Promise<void> {
   const exportJob = await adminApi.getJob(job.id).catch(() => job);
   const matchedTemplate = template || exportJob.templateSnapshot;
+
+  if (matchedTemplate?.docxTemplateName?.trim() === X530_CUSTOMER_TEMPLATE_NAME) {
+    const report = await adminApi.downloadCustomerReport(exportJob.id);
+    saveAs(report, `[ATT_X530_Inspection_Report]_${exportJob.id}.docx`);
+    await adminApi.recordExport(exportJob.id);
+    return;
+  }
 
   const dateStr = new Date(exportJob.createdAt).toLocaleDateString('vi-VN', {
     day: '2-digit',
@@ -318,7 +345,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
     const reportImages = getStepEvidenceSlots(sr, stepDef);
     stepImagesMap[sr.stepId] = [];
     for (const image of reportImages) {
-      const preparedImage = image.url ? await fetchImageForDocx(image.url, getImageTypeFromUrl(image.url)) : null;
+      const preparedImage = image.url ? await fetchImageForDocx(exportJob.id, image.url, getImageTypeFromUrl(image.url)) : null;
       stepImagesMap[sr.stepId].push({
         label: image.label,
         type: preparedImage?.type || null,

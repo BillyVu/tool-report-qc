@@ -101,6 +101,17 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       return mapInspectionJob(row);
     },
 
+    async downloadCustomerReport(jobId: string): Promise<Blob> {
+      const response = await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/customer-report.docx`, {
+        headers: { 'x-qc-admin-key': getAdminKey() },
+      });
+      if (!response.ok) {
+        const payload = await parseJson(response).catch(() => undefined);
+        throw new Error(payload?.error || `QC customer report request failed (${response.status})`);
+      }
+      return response.blob();
+    },
+
     async getKpis(): Promise<DashboardKPI> {
       return await expectOk(await fetchImpl('/api/admin/kpis', {
         headers: headers(),
@@ -138,10 +149,11 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       };
     },
 
-    async extendWorkerSession(jobId: string): Promise<{ createdAt: string; expiresAt: string; token?: string; sessionUrl?: string; isExpired: boolean }> {
+    async extendWorkerSession(jobId: string, hours = 1): Promise<{ createdAt: string; expiresAt: string; token?: string; sessionUrl?: string; extensionHours?: number; isExpired: boolean }> {
       const payload = await expectOk(await fetchImpl(`/api/admin/jobs/${encodeURIComponent(jobId)}/session/extend`, {
         method: 'PATCH',
         headers: headers(),
+        body: JSON.stringify({ hours }),
       }));
       const origin = options.origin ?? window.location.origin;
       const pathname = options.pathname ?? window.location.pathname;
@@ -151,6 +163,7 @@ export function createAdminApi(options: AdminApiOptions = {}) {
         expiresAt: payload.expiresAt,
         token,
         sessionUrl: token ? `${origin}${pathname}?jobSession=${encodeURIComponent(jobId)}&token=${encodeURIComponent(token)}` : undefined,
+        extensionHours: payload.extensionHours,
         isExpired: false,
       };
     },

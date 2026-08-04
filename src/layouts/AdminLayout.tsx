@@ -73,9 +73,9 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   };
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 font-sans overflow-hidden text-slate-800">
+    <div className="flex min-h-dvh w-full bg-slate-50 font-sans text-slate-800 lg:h-screen lg:overflow-hidden">
       {/* SLEEK SIDEBAR */}
-      <aside className="w-64 bg-slate-900 flex flex-col flex-shrink-0 border-r border-slate-800">
+      <aside className="hidden w-64 bg-slate-900 flex-col flex-shrink-0 border-r border-slate-800 lg:flex">
         {/* Brand Header */}
         <div className="p-6 flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-md shadow-blue-600/30">
@@ -136,11 +136,14 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50">
+      <main className="flex-1 flex min-h-dvh flex-col min-w-0 bg-slate-50 lg:min-h-0 lg:overflow-hidden">
         {/* TOP HEADER */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 lg:px-8 flex-shrink-0">
-          <div className="flex items-center gap-4">
-            <h1 className="text-lg font-bold text-slate-800 tracking-tight">
+        <header className="bg-white border-b border-slate-200 flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:h-16 lg:px-8 lg:py-0 flex-shrink-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white shadow-md shadow-blue-600/30 lg:hidden">
+              QC
+            </div>
+            <h1 className="min-w-0 flex-1 text-base font-bold text-slate-800 tracking-tight sm:text-lg">
               {pageTitles[activeTab] || 'Bảng Điều Khiển QC'}
             </h1>
             <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs font-medium border border-blue-100 flex items-center gap-1.5">
@@ -152,7 +155,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs lg:text-sm font-semibold transition-all shadow-sm active:scale-95"
+              className="flex w-full items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs sm:w-auto lg:text-sm font-semibold transition-all shadow-sm active:scale-95"
             >
               <Plus className="w-4 h-4" />
               <span>Tạo Lệnh Kiểm Tra</span>
@@ -161,7 +164,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         </header>
 
         {/* MAIN BODY AREA */}
-        <div className="flex-1 p-6 overflow-y-auto flex flex-col space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 pb-24 sm:p-5 lg:p-6 lg:pb-6 flex flex-col space-y-6">
           {toastMessage && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-900">
               {toastMessage}
@@ -170,6 +173,35 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           {children}
         </div>
       </main>
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur lg:hidden">
+        <div className="mx-auto grid max-w-3xl grid-cols-5 gap-1">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveTab(item.id as any)}
+                className={`relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[10px] font-bold transition-colors ${
+                  isActive
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                }`}
+              >
+                <Icon className="h-5 w-5" />
+                <span className="max-w-full truncate">{item.label}</span>
+                {item.badge && (
+                  <span className={`absolute right-1.5 top-1 rounded-full px-1.5 py-0.5 text-[9px] font-black ${item.badgeColor || 'bg-slate-900 text-white'}`}>
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       {/* Create Inspection Job Modal */}
       <CreateInspectionJobModal

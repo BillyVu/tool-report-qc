@@ -76,17 +76,20 @@ test('extends an existing worker session without generating a new token', async 
         token: 'worker-token',
         createdAt: '2026-08-02T00:00:00.000Z',
         expiresAt: '2026-08-04T00:00:00.000Z',
+        extensionHours: 2,
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
   });
 
-  const session = await api.extendWorkerSession('JOB-001');
+  const session = await api.extendWorkerSession('JOB-001', 2);
 
   assert.equal(calls[0].url, '/api/admin/jobs/JOB-001/session/extend');
   assert.equal(calls[0].init?.method, 'PATCH');
+  assert.equal(calls[0].init?.body, JSON.stringify({ hours: 2 }));
   assert.equal(session.token, 'worker-token');
   assert.equal(session.createdAt, '2026-08-02T00:00:00.000Z');
   assert.equal(session.expiresAt, '2026-08-04T00:00:00.000Z');
+  assert.equal(session.extensionHours, 2);
   assert.equal(session.sessionUrl, 'http://localhost:5173/?jobSession=JOB-001&token=worker-token');
 });
 

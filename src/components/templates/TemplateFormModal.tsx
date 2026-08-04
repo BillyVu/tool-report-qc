@@ -557,7 +557,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   return (
     <>
       <div
-        className="qc-builder-shell fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in cursor-pointer"
+        className="qc-builder-shell fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-start justify-center p-2 overflow-y-auto animate-fade-in cursor-pointer sm:p-4 sm:items-center"
         onClick={(e) => {
           if (e.target === e.currentTarget) {
             onClose();
@@ -565,13 +565,13 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
         }}
       >
         <div
-          className="qc-builder-modal w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden my-auto cursor-default"
+          className="qc-builder-modal w-full max-w-6xl max-h-[96dvh] flex flex-col overflow-hidden my-auto cursor-default"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="qc-builder-header text-white p-5 flex items-center justify-between shrink-0">
-            <div>
-              <h2 className="text-lg font-bold">
+          <div className="qc-builder-header text-white p-4 flex items-start justify-between gap-3 shrink-0 sm:p-5">
+            <div className="min-w-0">
+              <h2 className="text-base font-bold sm:text-lg">
                 {isEdit ? 'Chỉnh Sửa Mẫu Checklist QC' : 'Tạo Mẫu Checklist & Cấu Hình Word DOCX Mới'}
               </h2>
               <p className="text-xs text-slate-400">
@@ -587,7 +587,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
           </div>
 
           {/* Form Content */}
-          <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#090d16]">
+          <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-4 space-y-6 bg-[#090d16] sm:p-6">
             {saveError && (
               <div className="bg-red-950/40 border border-red-500/30 text-red-200 text-xs font-semibold rounded-lg p-3">
                 {saveError}
@@ -596,7 +596,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
             {/* Template Basic Info */}
             <div className="qc-builder-card space-y-4 p-5">
-              <div className="qc-builder-card-header flex items-center justify-between pb-3">
+              <div className="qc-builder-card-header flex flex-col gap-2 pb-3 sm:flex-row sm:items-center sm:justify-between">
                 <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                   <FileText className="w-4 h-4 text-sky-400" />
                   <span>Thông Tin Cơ Bản Mẫu Checklist & File DOCX</span>
@@ -675,7 +675,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
               {/* Extended Metadata (Client, Supplier, Specs, AQL, Versions) */}
               <div className="pt-3 border-t border-slate-700 space-y-3">
-                <div className="text-xs font-bold text-slate-100 flex items-center justify-between">
+                <div className="text-xs font-bold text-slate-100 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <span>Thông Tin Khách Hàng, Nhà Máy & Quy Chuẩn Báo Cáo (Report Header Specs)</span>
                   <span className="text-[11px] text-sky-400 font-normal">Trích xuất từ mẫu kiểm định thực tế</span>
                 </div>
@@ -738,20 +738,20 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-400 mb-1">Số Lượng Đơn / Thùng:</label>
-                    <div className="flex items-center gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         type="text"
                         value={orderQty}
                         onChange={(e) => setOrderQty(e.target.value)}
                         placeholder="117 pcs"
-                        className="w-1/2 px-2.5 py-1.5 text-xs"
+                        className="w-full px-2.5 py-1.5 text-xs"
                       />
                       <input
                         type="text"
                         value={cartonQty}
                         onChange={(e) => setCartonQty(e.target.value)}
                         placeholder="24 cartons"
-                        className="w-1/2 px-2.5 py-1.5 text-xs"
+                        className="w-full px-2.5 py-1.5 text-xs"
                       />
                     </div>
                   </div>
@@ -780,20 +780,20 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-400 mb-1">System / Hardware Version:</label>
-                    <div className="flex items-center gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         type="text"
                         value={systemVersion}
                         onChange={(e) => setSystemVersion(e.target.value)}
                         placeholder="Sys: 15"
-                        className="w-1/2 px-2.5 py-1.5 text-xs"
+                        className="w-full px-2.5 py-1.5 text-xs"
                       />
                       <input
                         type="text"
                         value={hardwareVersion}
                         onChange={(e) => setHardwareVersion(e.target.value)}
                         placeholder="HW: V1.0"
-                        className="w-1/2 px-2.5 py-1.5 text-xs"
+                        className="w-full px-2.5 py-1.5 text-xs"
                       />
                     </div>
                   </div>
@@ -823,11 +823,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     Kéo thả biểu tượng hai hàng chấm để thay đổi thứ tự các bước
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
                   <button
                     type="button"
                     onClick={handleLoadX530ReportTemplate}
-                    className="qc-builder-btn-primary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                    className="qc-builder-btn-primary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all"
                     title="Nạp đầy đủ toàn bộ quy trình kiểm định 10 bước & thông tin báo cáo X530 Knobs từ file DOCX"
                   >
                     <Sparkles className="w-4 h-4 text-blue-200" />
@@ -837,7 +837,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                   <button
                     type="button"
                     onClick={handleLoadStandard6Steps}
-                    className="qc-builder-btn-secondary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors"
+                    className="qc-builder-btn-secondary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
                     title="Nạp nhanh 6 bước kiểm định điện thoại chuẩn theo đúng ảnh yêu cầu"
                   >
                     <Sparkles className="w-4 h-4 text-sky-400" />
@@ -847,7 +847,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                   <button
                     type="button"
                     onClick={handleAddStep}
-                    className="qc-builder-btn-secondary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors"
+                    className="qc-builder-btn-secondary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Thêm Bước</span>
@@ -865,18 +865,18 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
           </form>
 
           {/* Footer Actions */}
-          <div className="p-4 border-t border-slate-700 bg-[#0f172a] flex items-center justify-between shrink-0">
+          <div className="p-4 border-t border-slate-700 bg-[#0f172a] flex flex-col gap-3 shrink-0 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
               onClick={() => setIsPreviewOpen(true)}
-              className="qc-builder-btn-secondary px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors"
+              className="qc-builder-btn-secondary px-4 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
               title="Xem trước giao diện công nhân làm việc với mẫu hiện tại"
             >
               <Eye className="w-4 h-4 text-sky-400" />
               <span>Xem Trước Mẫu (Worker Preview)</span>
             </button>
 
-            <div className="flex items-center gap-3">
+            <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center sm:gap-3">
               <button
                 type="button"
                 onClick={onClose}
@@ -888,7 +888,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                 type="button"
                 onClick={handleFormSubmit}
                 disabled={isSaving}
-                className="qc-builder-btn-primary px-6 py-2 rounded-lg disabled:bg-slate-600 text-xs font-bold shadow-md shadow-sky-500/20 transition-all flex items-center gap-2"
+                className="qc-builder-btn-primary px-6 py-2 rounded-lg disabled:bg-slate-600 text-xs font-bold shadow-md shadow-sky-500/20 transition-all flex items-center justify-center gap-2"
               >
                 <Check className="w-4 h-4" />
                 <span>{isSaving ? 'Đang lưu database...' : isEdit ? 'Cập Nhật Mẫu Checklist' : 'Tạo Mẫu Mới'}</span>

@@ -9,6 +9,7 @@ Trạng thái hiện tại:
 - App source trên VPS: `/opt/tool-report-qc`
 - Production `.env` trên VPS: `/opt/tool-report-qc/.env`
 - Ảnh upload lưu trên VPS: `/srv/tool-report-qc/uploads`
+- Mẫu DOCX khách hàng lưu trên VPS: `/srv/tool-report-qc/templates`
 - Reverse proxy: Traefik gateway hiện có trên VPS
 - Docker Compose project: `tool-report-qc`
 - Git branch triển khai hiện tại: `feature/vps-auto-deploy`
@@ -54,6 +55,7 @@ Trên VPS:
 /opt/tool-report-qc
 /opt/tool-report-qc/.env
 /srv/tool-report-qc/uploads
+/srv/tool-report-qc/templates
 /root/service/gateway/config/dynamic.yml
 ```
 
@@ -104,6 +106,7 @@ APP_DIR=/opt/tool-report-qc
 test "$APP_DIR" = "/opt/tool-report-qc"
 test -f "$APP_DIR/.env"
 mkdir -p /srv/tool-report-qc/uploads
+mkdir -p /srv/tool-report-qc/templates
 find "$APP_DIR" -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
 tar -xzf /tmp/tool-report-qc-source.tgz -C "$APP_DIR"
 rm -f /tmp/tool-report-qc-source.tgz
@@ -117,6 +120,7 @@ Lưu ý:
 - Lệnh trên giữ lại `/opt/tool-report-qc/.env`.
 - Không xoá Docker volumes của PostgreSQL/RabbitMQ.
 - Không xoá `/srv/tool-report-qc/uploads`.
+- Không xoá `/srv/tool-report-qc/templates`.
 
 ### 3.5 Verify sau deploy
 

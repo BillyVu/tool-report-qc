@@ -130,7 +130,7 @@ export const TemplatesView: React.FC = () => {
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -141,7 +141,7 @@ export const TemplatesView: React.FC = () => {
             className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
           />
         </div>
-        <div className="text-xs text-slate-500 font-medium">
+        <div className="shrink-0 text-xs text-slate-500 font-medium">
           Hiển thị <strong>{filteredTemplates.length}</strong> mẫu
         </div>
       </div>
@@ -175,7 +175,7 @@ export const TemplatesView: React.FC = () => {
           >
             <div className="space-y-3">
               {/* Header Badges */}
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-mono text-[11px] font-bold bg-slate-900 text-white px-2.5 py-0.5 rounded-md">
                   {tmpl.id}
                 </span>
@@ -191,10 +191,10 @@ export const TemplatesView: React.FC = () => {
               </div>
 
               {/* Word Template File Info */}
-              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs text-slate-700 font-medium">
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200/80 flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2 text-xs text-slate-700 font-medium">
                   <FileCode className="w-4 h-4 text-blue-600 shrink-0" />
-                  <span className="truncate max-w-[200px]" title={tmpl.docxTemplateName}>
+                  <span className="truncate" title={tmpl.docxTemplateName}>
                     {tmpl.docxTemplateName}
                   </span>
                 </div>
@@ -203,7 +203,7 @@ export const TemplatesView: React.FC = () => {
 
               {/* Steps & Mapped Placeholders Overview */}
               <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                <div className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                <div className="text-xs font-bold text-slate-700 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <span>Các bước quy trình ({tmpl.steps.length} bước):</span>
                   <span className="text-[11px] text-slate-400 font-normal">Cập nhật: {new Date(tmpl.updatedAt).toLocaleDateString('vi-VN')}</span>
                 </div>
@@ -212,9 +212,9 @@ export const TemplatesView: React.FC = () => {
                   {tmpl.steps.map((step) => (
                     <div
                       key={step.stepId}
-                      className="text-xs bg-slate-50 hover:bg-slate-100 p-2 rounded-md border border-slate-200/60 flex items-center justify-between gap-2"
+                      className="text-xs bg-slate-50 hover:bg-slate-100 p-2 rounded-md border border-slate-200/60 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center"
                     >
-                      <div className="flex items-center gap-2 truncate">
+                      <div className="flex min-w-0 items-center gap-2">
                         <span className="font-bold text-slate-800 text-[11px] shrink-0">{step.stepId}:</span>
                         <span className="truncate text-slate-700">{step.title}</span>
                       </div>
@@ -233,8 +233,8 @@ export const TemplatesView: React.FC = () => {
             </div>
 
             {/* Actions Card Footer */}
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
+            <div className="pt-3 border-t border-slate-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   onClick={() => handlePreview(tmpl)}
                   className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors flex items-center gap-1.5 border border-slate-200"
@@ -254,7 +254,7 @@ export const TemplatesView: React.FC = () => {
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   onClick={() => handleDelete(tmpl.id)}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
