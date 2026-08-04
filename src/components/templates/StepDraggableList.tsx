@@ -30,7 +30,7 @@ import {
   Plus
 } from 'lucide-react';
 import { InspectionStep, StepInputType, AiDetectType, PhotoSlotConfig, TextFieldConfig, PhotoType } from '../../types/qc';
-import { PHOTO_TYPE_OPTIONS, getPhotoTypeInfo } from '../../constants/photoTypes';
+import { PHOTO_TYPE_OPTIONS, loadPhotoTypeOptions, getPhotoTypeInfo } from '../../constants/photoTypes';
 import { getWordMappingSummary, hasCompleteWordMapping } from '../../utils/docxMapping';
 
 interface SortableStepItemProps {
@@ -472,7 +472,7 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
                           onChange={(e) => handleSlotPhotoTypeChange(sIdx, e.target.value as PhotoType)}
                           className="w-full text-[11px] font-bold px-1.5 py-1"
                         >
-                          {PHOTO_TYPE_OPTIONS.map((opt) => (
+                          {loadPhotoTypeOptions().map((opt) => (
                             <option key={opt.type} value={opt.type}>
                               {opt.iconEmoji} {opt.label}
                             </option>

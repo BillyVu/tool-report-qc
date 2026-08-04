@@ -1,25 +1,4 @@
-export type PhotoType =
-  | 'VISUAL_FRONT'
-  | 'VISUAL_BACK'
-  | 'VISUAL_SIDES'
-  | 'ANIMATION_BOOT'
-  | 'ANIMATION_SHUTDOWN'
-  | 'IMEI_DIAL'
-  | 'SETTINGS_ABOUT'
-  | 'LABEL_BARCODE'
-  | 'CAMERA_COLOR_WHEEL'
-  | 'CAMERA_WHITE_BG'
-  | 'CAMERA_BLACK_BG'
-  | 'CAMERA_MIC_TEST'
-  | 'BLUETOOTH_SCAN'
-  | 'BLUETOOTH_PAIRED'
-  | 'BLUETOOTH_TRANSFER'
-  | 'MMI_RED'
-  | 'MMI_GREEN'
-  | 'MMI_BLUE'
-  | 'MMI_WHITE'
-  | 'MMI_BLACK'
-  | 'GENERAL_OTHER';
+export type PhotoType = string;
 
 export interface PhotoTypeOption {
   type: PhotoType;
@@ -192,7 +171,42 @@ export const PHOTO_TYPE_OPTIONS: PhotoTypeOption[] = [
   }
 ];
 
+export const PHOTO_TYPES_STORAGE_KEY = 'qc_custom_photo_types_v2';
+
+export function loadPhotoTypeOptions(): PhotoTypeOption[] {
+  try {
+    const stored = localStorage.getItem(PHOTO_TYPES_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to load custom photo types:', e);
+  }
+  return PHOTO_TYPE_OPTIONS;
+}
+
+export function savePhotoTypeOptions(options: PhotoTypeOption[]): void {
+  try {
+    localStorage.setItem(PHOTO_TYPES_STORAGE_KEY, JSON.stringify(options));
+  } catch (e) {
+    console.error('Failed to save custom photo types:', e);
+  }
+}
+
+export function resetPhotoTypeOptions(): PhotoTypeOption[] {
+  try {
+    localStorage.removeItem(PHOTO_TYPES_STORAGE_KEY);
+  } catch (e) {
+    console.error('Failed to reset custom photo types:', e);
+  }
+  return PHOTO_TYPE_OPTIONS;
+}
+
 export function getPhotoTypeInfo(type?: PhotoType): PhotoTypeOption {
-  if (!type) return PHOTO_TYPE_OPTIONS[PHOTO_TYPE_OPTIONS.length - 1];
-  return PHOTO_TYPE_OPTIONS.find(p => p.type === type) || PHOTO_TYPE_OPTIONS[PHOTO_TYPE_OPTIONS.length - 1];
+  const currentOptions = loadPhotoTypeOptions();
+  if (!type) return currentOptions[currentOptions.length - 1] || PHOTO_TYPE_OPTIONS[PHOTO_TYPE_OPTIONS.length - 1];
+  return currentOptions.find(p => p.type === type) || currentOptions.find(p => p.type === 'GENERAL_OTHER') || currentOptions[currentOptions.length - 1] || PHOTO_TYPE_OPTIONS[PHOTO_TYPE_OPTIONS.length - 1];
 }

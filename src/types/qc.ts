@@ -171,3 +171,20 @@ export interface DashboardKPI {
   passRate: number;
   todayCount: number;
 }
+
+export interface SystemImageConfig {
+  allowedTypes: string[]; // e.g. ['png', 'jpg', 'jpeg', 'webp', 'heic', 'bmp']
+  exportFormat: 'AUTO' | 'PNG' | 'JPG';
+  maxSizeMb: number;
+  compressionQuality: 'ORIGINAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  autoOptimizeForDocx: boolean;
+}
+
+export interface SystemSettings {
+  factoryName: string;
+  department: string;
+  defaultWidth: number;
+  defaultHeight: number;
+  autoRefreshInterval: number;
+  imageConfig: SystemImageConfig;
+}

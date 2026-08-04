@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createAdminApi } from './adminApi';
 import { ChecklistTemplate } from '../types/qc';
 
-test('loads admin jobs using the configured admin API key', async () => {
+test('loads admin jobs using the configured admin API key and base URL', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const api = createAdminApi({
     adminKey: 'secret',
@@ -35,13 +35,28 @@ test('loads admin jobs using the configured admin API key', async () => {
 
   const jobs = await api.listJobs();
 
-  assert.equal(calls[0].url, '/api/admin/jobs');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/jobs');
   assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
   assert.equal(jobs[0].id, 'JOB-001');
   assert.equal(jobs[0].workerName, '');
   assert.equal(jobs[0].sessionToken, 'worker-token');
   assert.equal(jobs[0].sessionCreatedAt, '2026-08-02T01:00:00.000Z');
   assert.equal(jobs[0].sessionExpiresAt, '2026-08-03T01:00:00.000Z');
+});
+
+test('supports custom baseUrl option in createAdminApi', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const api = createAdminApi({
+    adminKey: 'secret',
+    baseUrl: 'https://custom-domain.com/',
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+  });
+
+  await api.listTemplates();
+  assert.equal(calls[0].url, 'https://custom-domain.com/api/admin/templates');
 });
 
 test('creates a worker session URL for an admin job', async () => {
@@ -83,7 +98,7 @@ test('extends an existing worker session without generating a new token', async 
 
   const session = await api.extendWorkerSession('JOB-001', 2);
 
-  assert.equal(calls[0].url, '/api/admin/jobs/JOB-001/session/extend');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/jobs/JOB-001/session/extend');
   assert.equal(calls[0].init?.method, 'PATCH');
   assert.equal(calls[0].init?.body, JSON.stringify({ hours: 2 }));
   assert.equal(session.token, 'worker-token');
@@ -138,7 +153,7 @@ test('creates an inspection job from a database template snapshot', async () => 
     line: 'Chuyền 01',
   });
 
-  assert.equal(calls[0].url, '/api/admin/jobs');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/jobs');
   assert.equal(calls[0].init?.method, 'POST');
   assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
   assert.equal(JSON.parse(String(calls[0].init?.body)).templateSnapshot.id, 'TMPL-NEW');
@@ -169,7 +184,7 @@ test('loads checklist templates from the admin API database endpoint', async () 
 
   const templates = await api.listTemplates();
 
-  assert.equal(calls[0].url, '/api/admin/templates');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/templates');
   assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
   assert.equal(templates[0].id, 'TMPL-001');
   assert.equal(templates[0].title, 'Checklist DB');
@@ -208,7 +223,7 @@ test('loads a single admin job before exporting the Word report', async () => {
 
   const job = await api.getJob('JOB-001');
 
-  assert.equal(calls[0].url, '/api/admin/jobs/JOB-001');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/jobs/JOB-001');
   assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
   assert.equal(job.stepResults[0].photos?.[0].url, '/uploads/photo.png');
 });
@@ -235,7 +250,7 @@ test('saves a checklist template to the admin API database endpoint', async () =
 
   const saved = await api.saveTemplate(template);
 
-  assert.equal(calls[0].url, '/api/admin/templates');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/templates');
   assert.equal(calls[0].init?.method, 'POST');
   assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), template);
@@ -266,9 +281,9 @@ test('updates and deletes checklist templates through the admin API', async () =
   await api.updateTemplate(template);
   await api.deleteTemplate('TMPL-EDIT');
 
-  assert.equal(calls[0].url, '/api/admin/templates/TMPL-EDIT');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/templates/TMPL-EDIT');
   assert.equal(calls[0].init?.method, 'PUT');
-  assert.equal(calls[1].url, '/api/admin/templates/TMPL-EDIT');
+  assert.equal(calls[1].url, 'https://qc.apexdev.website/api/admin/templates/TMPL-EDIT');
   assert.equal(calls[1].init?.method, 'DELETE');
 });
 
@@ -306,7 +321,7 @@ test('moderates an inspection step through the admin API', async () => {
 
   const job = await api.moderateJobStep('JOB-001', 'S1', 'APPROVED', 'Đủ bằng chứng.');
 
-  assert.equal(calls[0].url, '/api/admin/jobs/JOB-001/step-results/S1/moderation');
+  assert.equal(calls[0].url, 'https://qc.apexdev.website/api/admin/jobs/JOB-001/step-results/S1/moderation');
   assert.equal(calls[0].init?.method, 'PATCH');
   assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
