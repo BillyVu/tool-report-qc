@@ -1,0 +1,12 @@
+[Unit]
+Description=Scan GitHub Releases for Tool Report QC updates
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+Unit=tool-report-qc-release-updater.service
+
+[Install]
+WantedBy=timers.target

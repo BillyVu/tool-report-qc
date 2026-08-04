@@ -414,14 +414,64 @@ Không rollback bằng cách xoá volume, trừ khi chủ động muốn mất d
 ssh root@36.50.176.196 'cd /opt/tool-report-qc && docker compose -p tool-report-qc up -d'
 ```
 
-## 12. Checklist trước khi merge vào `main`
+## 12. Auto update theo GitHub Releases
 
-- [ ] GitHub Actions secrets đã tạo đủ.
+VPS tự scan GitHub Releases để phát hiện version mới, tải source của release đó, rebuild Docker Compose và health check. Không cần SSH vào VPS để update code thủ công.
+
+File trong repo:
+
+```text
+scripts/release-auto-deploy.sh
+deploy/systemd/tool-report-qc-release-updater.service
+deploy/systemd/tool-report-qc-release-updater.timer
+deploy/systemd/tool-report-qc-release-updater.env.example
+```
+
+Cài timer trên VPS:
+
+```bash
+ssh root@36.50.176.196 'set -euo pipefail
+cd /opt/tool-report-qc
+install -m 0755 scripts/release-auto-deploy.sh /opt/tool-report-qc/scripts/release-auto-deploy.sh
+install -m 0644 deploy/systemd/tool-report-qc-release-updater.service /etc/systemd/system/tool-report-qc-release-updater.service
+install -m 0644 deploy/systemd/tool-report-qc-release-updater.timer /etc/systemd/system/tool-report-qc-release-updater.timer
+if [ ! -f /etc/tool-report-qc-release-updater.env ]; then
+  install -m 0600 deploy/systemd/tool-report-qc-release-updater.env.example /etc/tool-report-qc-release-updater.env
+fi
+systemctl daemon-reload
+systemctl enable --now tool-report-qc-release-updater.timer
+systemctl list-timers tool-report-qc-release-updater.timer
+'
+```
+
+Nếu repo private hoặc GitHub API cần token, sửa `/etc/tool-report-qc-release-updater.env` và thêm:
+
+```text
+GITHUB_TOKEN=<token chỉ có quyền đọc release/source>
+```
+
+Kiểm tra thủ công:
+
+```bash
+ssh root@36.50.176.196 'systemctl start tool-report-qc-release-updater.service && journalctl -u tool-report-qc-release-updater.service -n 100 --no-pager'
+```
+
+State tag đã deploy:
+
+```bash
+ssh root@36.50.176.196 'cat /var/lib/tool-report-qc/deployed-release-tag'
+```
+
+Từ sau khi timer chạy, quy trình update là:
+
+1. Merge code vào `main`.
+2. Tạo GitHub Release mới tại `https://github.com/BillyVu/tool-report-qc/releases/` với tag version mới.
+3. VPS tự scan mỗi 10 phút, thấy tag mới thì rebuild và deploy.
+
+## 13. Checklist trước khi tạo GitHub Release
+
 - [ ] `npm test` pass.
 - [ ] `npm run lint` pass.
 - [ ] `npm run build` pass.
 - [ ] `docker compose config` pass.
 - [ ] `https://qc.apexdev.website/api/health` đang OK.
-- [ ] Người phụ trách đã rotate `GEMINI_API_KEY` nếu cần.
-
-Sau khi checklist pass, merge branch `feature/vps-auto-deploy` vào `main`. Từ đó, mỗi push vào `main` sẽ auto deploy lại VPS.
