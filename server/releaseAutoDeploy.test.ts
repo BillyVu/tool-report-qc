@@ -9,7 +9,8 @@ const timerPath = new URL('../deploy/systemd/tool-report-qc-release-updater.time
 test('release updater scans GitHub Releases and deploys only new tags', () => {
   const script = readFileSync(scriptPath, 'utf8');
 
-  assert.match(script, /api\.github\.com\/repos\/\$\{REPO\}\/releases\/latest/);
+  assert.match(script, /api\.github\.com\/repos\/\$\{REPO\}\/releases/);
+  assert.match(script, /INCLUDE_PRERELEASE/);
   assert.match(script, /parse_json_field tag_name/);
   assert.match(script, /parse_json_field tarball_url/);
   assert.match(script, /STATE_FILE/);

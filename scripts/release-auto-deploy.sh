@@ -10,6 +10,7 @@ COMPOSE_PROJECT="${COMPOSE_PROJECT:-tool-report-qc}"
 INTERNAL_HEALTH_URL="${INTERNAL_HEALTH_URL:-http://127.0.0.1:3020/api/health}"
 PUBLIC_HEALTH_URL="${PUBLIC_HEALTH_URL:-https://qc.apexdev.website/api/health}"
 POLL_ONLY="${POLL_ONLY:-false}"
+INCLUDE_PRERELEASE="${INCLUDE_PRERELEASE:-true}"
 
 log() {
   printf '[%s] %s\n' "$(date -Is)" "$*" >&2
@@ -46,7 +47,7 @@ print(value)
 }
 
 download_latest_release_metadata() {
-  local api_url="https://api.github.com/repos/${REPO}/releases/latest"
+  local api_url="https://api.github.com/repos/${REPO}/releases"
   local response_file status
 
   response_file="$(mktemp /tmp/tool-report-qc-release-api.XXXXXX)"
@@ -57,13 +58,36 @@ download_latest_release_metadata() {
     "$api_url")"
 
   if [ "$status" = "404" ]; then
-    log "No accessible latest release for ${REPO}. Create a GitHub Release or set GITHUB_TOKEN if the repo is private."
+    log "No accessible releases for ${REPO}. Create a GitHub Release or set GITHUB_TOKEN if the repo is private."
     rm -f "$response_file"
     return 10
   fi
 
   case "$status" in
-    2*) cat "$response_file" ;;
+    2*)
+      python3 -c '
+import json
+import os
+import sys
+
+include_prerelease = os.environ.get("INCLUDE_PRERELEASE", "true").lower() == "true"
+releases = json.load(open(sys.argv[1]))
+
+if not isinstance(releases, list):
+    print(json.dumps(releases))
+    sys.exit(0)
+
+for release in releases:
+    if release.get("draft"):
+        continue
+    if release.get("prerelease") and not include_prerelease:
+        continue
+    print(json.dumps(release))
+    sys.exit(0)
+
+sys.exit(10)
+' "$response_file"
+      ;;
     *) cat "$response_file" >&2; rm -f "$response_file"; fail "GitHub Releases API returned HTTP ${status}" ;;
   esac
 
