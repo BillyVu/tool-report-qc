@@ -17,6 +17,11 @@ test('release updater scans GitHub Releases and deploys only new tags', () => {
   assert.match(script, /latest_tag" = "\$current_tag/);
   assert.match(script, /flock -n 9/);
   assert.match(script, /Authorization: Bearer/);
+  assert.match(script, /create_github_deployment/);
+  assert.match(script, /\/deployments/);
+  assert.match(script, /\/statuses/);
+  assert.match(script, /in_progress/);
+  assert.match(script, /success/);
   assert.match(script, /find "\$APP_DIR" -mindepth 1 -maxdepth 1 ! -name \.env -exec rm -rf/);
   assert.match(script, /docker compose -p "\$COMPOSE_PROJECT" up -d --build/);
   assert.match(script, /curl --fail "\$INTERNAL_HEALTH_URL"/);

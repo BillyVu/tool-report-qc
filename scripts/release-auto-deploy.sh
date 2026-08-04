@@ -11,6 +11,8 @@ INTERNAL_HEALTH_URL="${INTERNAL_HEALTH_URL:-http://127.0.0.1:3020/api/health}"
 PUBLIC_HEALTH_URL="${PUBLIC_HEALTH_URL:-https://qc.apexdev.website/api/health}"
 POLL_ONLY="${POLL_ONLY:-false}"
 INCLUDE_PRERELEASE="${INCLUDE_PRERELEASE:-true}"
+DEPLOYMENT_ENVIRONMENT="${DEPLOYMENT_ENVIRONMENT:-production}"
+DEPLOYMENT_DESCRIPTION="${DEPLOYMENT_DESCRIPTION:-VPS Docker Compose deployment}"
 
 log() {
   printf '[%s] %s\n' "$(date -Is)" "$*" >&2
@@ -98,6 +100,104 @@ download_release_source() {
   local tarball_url="$1"
   local output="$2"
   curl --fail --silent --show-error --location "${github_header_args[@]}" "$tarball_url" -o "$output"
+}
+
+create_github_deployment() {
+  local ref="$1"
+  local payload response_file status deployment_id
+
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    log "Skipping GitHub deployment record because GITHUB_TOKEN is not set"
+    return 0
+  fi
+
+  payload="$(mktemp /tmp/tool-report-qc-deployment-payload.XXXXXX)"
+  response_file="$(mktemp /tmp/tool-report-qc-deployment-response.XXXXXX)"
+  python3 -c '
+import json
+import os
+import sys
+
+payload = {
+    "ref": sys.argv[1],
+    "environment": os.environ.get("DEPLOYMENT_ENVIRONMENT", "production"),
+    "description": os.environ.get("DEPLOYMENT_DESCRIPTION", "VPS Docker Compose deployment"),
+    "auto_merge": False,
+    "required_contexts": [],
+    "production_environment": os.environ.get("DEPLOYMENT_ENVIRONMENT", "production") == "production",
+}
+json.dump(payload, open(sys.argv[2], "w"))
+' "$ref" "$payload"
+
+  status="$(curl --silent --show-error --location \
+    --write-out '%{http_code}' \
+    --output "$response_file" \
+    -X POST \
+    "${github_header_args[@]}" \
+    -d @"$payload" \
+    "https://api.github.com/repos/${REPO}/deployments")"
+
+  rm -f "$payload"
+
+  case "$status" in
+    2*)
+      deployment_id="$(cat "$response_file" | parse_json_field id)"
+      rm -f "$response_file"
+      printf '%s\n' "$deployment_id"
+      ;;
+    403|404)
+      log "GitHub deployment record skipped. Token cannot access deployments API for ${REPO} (HTTP ${status})."
+      rm -f "$response_file"
+      ;;
+    *)
+      cat "$response_file" >&2
+      rm -f "$response_file"
+      log "GitHub deployment record skipped after HTTP ${status}"
+      ;;
+  esac
+}
+
+create_github_deployment_status() {
+  local deployment_id="$1"
+  local state="$2"
+  local description="$3"
+  local payload response_file status
+
+  if [ -z "$deployment_id" ] || [ -z "${GITHUB_TOKEN:-}" ]; then
+    return 0
+  fi
+
+  payload="$(mktemp /tmp/tool-report-qc-deployment-status-payload.XXXXXX)"
+  response_file="$(mktemp /tmp/tool-report-qc-deployment-status-response.XXXXXX)"
+  python3 -c '
+import json
+import os
+import sys
+
+payload = {
+    "state": sys.argv[1],
+    "environment": os.environ.get("DEPLOYMENT_ENVIRONMENT", "production"),
+    "environment_url": os.environ.get("PUBLIC_APP_URL", "https://qc.apexdev.website"),
+    "description": sys.argv[2],
+    "auto_inactive": False,
+}
+json.dump(payload, open(sys.argv[3], "w"))
+' "$state" "$description" "$payload"
+
+  status="$(curl --silent --show-error --location \
+    --write-out '%{http_code}' \
+    --output "$response_file" \
+    -X POST \
+    "${github_header_args[@]}" \
+    -d @"$payload" \
+    "https://api.github.com/repos/${REPO}/deployments/${deployment_id}/statuses")"
+
+  rm -f "$payload"
+  case "$status" in
+    2*) ;;
+    *) log "GitHub deployment status ${state} skipped after HTTP ${status}" ;;
+  esac
+  rm -f "$response_file"
 }
 
 deploy_release_archive() {
@@ -207,7 +307,10 @@ main() {
 
   tarball="/tmp/tool-report-qc-${latest_tag//\//-}.tgz"
   download_release_source "$tarball_url" "$tarball"
+  deployment_id="$(create_github_deployment "$latest_tag")"
+  create_github_deployment_status "$deployment_id" "in_progress" "Deploying ${latest_tag} to VPS"
   deploy_release_archive "$latest_tag" "$tarball"
+  create_github_deployment_status "$deployment_id" "success" "Release ${latest_tag} deployed to VPS"
 }
 
 main "$@"
