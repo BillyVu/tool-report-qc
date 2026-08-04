@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FileCode, FileText, Check, X, Sliders, Upload, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { InspectionStep, DocxMapping } from '../../types/qc';
+import { validateDocxMapping } from '../../utils/docxMapping';
 
 interface DocxMappingModalProps {
   isOpen: boolean;
@@ -26,22 +27,29 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
   const [statusTag, setStatusTag] = useState(step.mapping?.statusTag || `{{status_${step.stepId.toLowerCase()}}}`);
   const [imageWidthMm, setImageWidthMm] = useState(step.mapping?.imageWidthMm || 60);
   const [imageHeightMm, setImageHeightMm] = useState(step.mapping?.imageHeightMm || 45);
+  const [errors, setErrors] = useState<string[]>([]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveMapping(stepIndex, {
-      imageTag,
-      noteTag,
-      statusTag,
+    const mapping = {
+      imageTag: imageTag.trim(),
+      noteTag: noteTag.trim(),
+      statusTag: statusTag.trim(),
       imageWidthMm,
       imageHeightMm
-    });
+    };
+    const nextErrors = validateDocxMapping(mapping);
+    if (nextErrors.length) {
+      setErrors(nextErrors);
+      return;
+    }
+    onSaveMapping(stepIndex, mapping);
     onClose();
   };
 
   return (
     <div 
-      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in cursor-pointer"
+      className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-start justify-center overflow-y-auto p-2 animate-fade-in cursor-pointer sm:items-center sm:p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
@@ -49,16 +57,16 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
       }}
     >
       <div 
-        className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden cursor-default"
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[96dvh] overflow-hidden cursor-default flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-slate-900 text-white p-5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="bg-slate-900 text-white p-4 flex items-start justify-between gap-3 sm:p-5">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold">
               <FileCode className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h2 className="text-base font-bold">Cấu hình Ánh Xạ Thẻ Placeholder Word (.docx)</h2>
               <p className="text-xs text-slate-400">
                 Gán bước <strong>{step.stepId}: {step.title}</strong> vào thẻ trong file <strong>{docxTemplateName || 'Mau_Bao_Cao.docx'}</strong>
@@ -74,7 +82,15 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
         </div>
 
         {/* Body Form */}
-        <form onSubmit={handleSave} className="p-6 space-y-5">
+        <form onSubmit={handleSave} className="p-4 space-y-5 overflow-y-auto sm:p-6">
+          {errors.length > 0 && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 space-y-1">
+              {errors.map((error) => (
+                <div key={error}>{error}</div>
+              ))}
+            </div>
+          )}
+
           {/* Tag Binding Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Image Placeholder Tag */}
@@ -138,7 +154,7 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
               <span>Cấu hình Kích thước Khung Ảnh Chèn vào Word (mm)</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
                   Chiều rộng tối đa (Max Width)
@@ -179,7 +195,7 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
           </div>
 
           {/* Modal Footer */}
-          <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-3">
+          <div className="pt-4 border-t border-slate-200 grid grid-cols-1 gap-2 sm:flex sm:items-center sm:justify-end sm:gap-3">
             <button
               type="button"
               onClick={onClose}
@@ -189,7 +205,7 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+              className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
             >
               <Check className="w-4 h-4" />
               <span>Lưu Cấu Hình Thẻ Tag</span>

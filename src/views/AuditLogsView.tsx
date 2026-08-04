@@ -1,15 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { History, ShieldAlert, UserCheck, Calendar, Search, Trash2 } from 'lucide-react';
 import { AuditLogEntry } from '../types/qc';
-import { qcService } from '../services/qcService';
+import { adminApi } from '../services/adminApi';
 
 export const AuditLogsView: React.FC = () => {
-  const [logs, setLogs] = useState<AuditLogEntry[]>(qcService.getAuditLogs());
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loadError, setLoadError] = useState('');
 
-  const reloadLogs = () => {
-    setLogs(qcService.getAuditLogs());
+  const reloadLogs = async () => {
+    setLoadError('');
+    try {
+      setLogs(await adminApi.listAuditLogs());
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Không tải được audit logs từ server.');
+    }
   };
+
+  useEffect(() => {
+    void reloadLogs();
+  }, []);
 
   const filteredLogs = logs.filter(l => 
     l.jobId.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -31,6 +41,12 @@ export const AuditLogsView: React.FC = () => {
       </div>
 
       {/* Search Bar */}
+      {loadError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+          {loadError}. Kiểm tra Admin API Key trong mục Cài đặt.
+        </div>
+      )}
+
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between gap-4">
         <div className="relative flex-1 max-w-md">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />

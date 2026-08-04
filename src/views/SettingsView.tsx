@@ -1,26 +1,26 @@
 import React, { useState } from 'react';
-import { Settings, ShieldCheck, Building2, RefreshCw, FileText, Check } from 'lucide-react';
-import { qcService } from '../services/qcService';
+import { KeyRound, Building2, FileText, Check } from 'lucide-react';
+import { getAdminApiKey, setAdminApiKey } from '../services/adminApi';
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  onAuthUpdated?: () => void;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => {
   const [factoryName, setFactoryName] = useState('NHÀ MÁY SẢN XUẤT ĐIỆN TỬ & THIẾT BỊ THÔNG MINH');
   const [department, setDepartment] = useState('BỘ PHẬN PHÁT TRIỂN & QUẢN LÝ CHẤT LƯỢNG (QA/QC)');
   const [defaultWidth, setDefaultWidth] = useState(60);
   const [defaultHeight, setDefaultHeight] = useState(45);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(30);
+  const [adminApiKeyValue, setAdminApiKeyValue] = useState(() => getAdminApiKey());
   const [isSaved, setIsSaved] = useState(false);
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
+    setAdminApiKey(adminApiKeyValue, { persist: true });
+    onAuthUpdated?.();
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
-  };
-
-  const handleResetData = () => {
-    if (window.confirm('Bạn có chắc chắn muốn đặt lại dữ liệu mặc định ban đầu? Tất cả dữ liệu thử nghiệm sẽ được khôi phục.')) {
-      qcService.resetToDefault();
-      window.location.reload();
-    }
   };
 
   return (
@@ -67,6 +67,29 @@ export const SettingsView: React.FC = () => {
                 className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
             </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <KeyRound className="w-4 h-4 text-amber-600" />
+            <span>Kết Nối API Server Local/VPS</span>
+          </h2>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Admin API Key cho tester nội bộ
+            </label>
+            <input
+              type="password"
+              value={adminApiKeyValue}
+              onChange={(e) => setAdminApiKeyValue(e.target.value)}
+              placeholder="Nhập QC_ADMIN_API_KEY để tải lệnh và xuất URL session"
+              className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-[11px] text-slate-500 mt-1">
+              Key sẽ được lưu trên trình duyệt của thiết bị này để lần sau không cần đăng nhập lại. Nếu đổi mật khẩu trên VPS, cập nhật lại key ở đây.
+            </p>
           </div>
         </div>
 
@@ -126,16 +149,7 @@ export const SettingsView: React.FC = () => {
         </div>
 
         {/* Save & Reset Actions */}
-        <div className="flex items-center justify-between pt-4">
-          <button
-            type="button"
-            onClick={handleResetData}
-            className="px-4 py-2 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-colors flex items-center gap-1.5"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Khôi Phục Dữ Liệu Mẫu Ban Đầu</span>
-          </button>
-
+        <div className="flex items-center justify-end pt-4">
           <button
             type="submit"
             className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md transition-all flex items-center gap-2"

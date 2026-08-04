@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   ClipboardList, 
   Clock, 
@@ -15,8 +15,8 @@ import {
   Eye,
   Zap
 } from 'lucide-react';
-import { InspectionJob } from '../types/qc';
-import { qcService } from '../services/qcService';
+import { DashboardKPI, InspectionJob } from '../types/qc';
+import { adminApi } from '../services/adminApi';
 import { generateDocxReport } from '../services/docxExportService';
 
 interface DashboardViewProps {
@@ -28,13 +28,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateTab,
   onSelectJobForReview
 }) => {
-  const kpis = qcService.getKPIs();
-  const recentJobs = qcService.getJobs().slice(0, 5);
-  const failedJobs = qcService.getJobs().filter(j => j.status === 'FAILED');
+  const [kpis, setKpis] = useState<DashboardKPI>({ totalJobs: 0, inProgress: 0, completed: 0, failed: 0, passRate: 100, todayCount: 0 });
+  const [jobs, setJobs] = useState<InspectionJob[]>([]);
+  const [loadError, setLoadError] = useState('');
+
+  const loadDashboard = async () => {
+    setLoadError('');
+    try {
+      const [nextKpis, nextJobs] = await Promise.all([adminApi.getKpis(), adminApi.listJobs()]);
+      setKpis(nextKpis);
+      setJobs(nextJobs);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Không tải được dashboard từ server.');
+    }
+  };
+
+  useEffect(() => {
+    void loadDashboard();
+  }, []);
+
+  const recentJobs = jobs.slice(0, 5);
+  const failedJobs = jobs.filter(j => j.status === 'FAILED');
 
   const handleQuickExport = async (job: InspectionJob, e: React.MouseEvent) => {
     e.stopPropagation();
     await generateDocxReport(job);
+    await loadDashboard();
   };
 
   return (
@@ -49,17 +68,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Theo dõi tiến độ thu thập dữ liệu ảnh từ xưởng sản xuất theo thời gian thực và quản lý xuất báo cáo Word.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="grid w-full grid-cols-1 gap-2 sm:w-auto sm:grid-cols-2">
           <button
             onClick={() => onNavigateTab('templates')}
-            className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-2"
+            className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
           >
             <FileCheck2 className="w-4 h-4 text-slate-500" />
             <span>Cấu hình Mẫu Word</span>
           </button>
           <button
             onClick={() => onNavigateTab('inspections')}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
           >
             <ClipboardList className="w-4 h-4" />
             <span>Quản lý Tất cả Lô QC ({kpis.totalJobs})</span>
@@ -68,6 +87,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 4 Core KPI Cards */}
+      {loadError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+          {loadError}. Kiểm tra Admin API Key trong mục Cài đặt.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {/* Total Jobs */}
         <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden group hover:border-blue-300 transition-all">
@@ -177,7 +202,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Recent Activity Table */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-5 border-b border-slate-200 flex items-center justify-between">
+        <div className="p-5 border-b border-slate-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-900">
               Nhật ký Lệnh Kiểm Tra QC Mới Nhất
@@ -196,7 +221,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-sm">
+          <table className="w-full min-w-[760px] text-left border-collapse text-sm">
             <thead>
               <tr className="bg-slate-50 text-slate-500 font-bold text-xs uppercase border-b border-slate-200">
                 <th className="py-3.5 px-4">Mã Lệnh & Lô</th>
@@ -208,6 +233,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
+              {recentJobs.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-10 px-4 text-center text-sm text-slate-500">
+                    Chưa có lệnh QC để kiểm tra.
+                  </td>
+                </tr>
+              )}
               {recentJobs.map((job) => {
                 const isFail = job.status === 'FAILED';
                 const isDone = job.status === 'COMPLETED';
@@ -264,7 +296,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

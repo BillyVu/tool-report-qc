@@ -1,16 +1,10 @@
+let sessionDeviceId = '';
+
 export function getDeviceMacAddress(): string {
-  try {
-    let mac = localStorage.getItem('qc_device_mac_v1');
-    if (!mac) {
-      // Generate a realistic MAC Address format: MAC-XX:XX:XX:XX:XX:XX
-      const hex = () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0').toUpperCase();
-      mac = `MAC-${hex()}:${hex()}:${hex()}:${hex()}:${hex()}:${hex()}`;
-      localStorage.setItem('qc_device_mac_v1', mac);
-    }
-    return mac;
-  } catch (e) {
-    return 'MAC-7C:D1:C3:A4:E5:F6';
-  }
+  if (sessionDeviceId) return sessionDeviceId;
+  const hex = () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0').toUpperCase();
+  sessionDeviceId = `SESSION-${hex()}${hex()}-${hex()}${hex()}-${hex()}${hex()}`;
+  return sessionDeviceId;
 }
 
 export function getDeviceInfo(): string {

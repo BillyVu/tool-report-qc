@@ -19,12 +19,12 @@ import {
   Download,
   Laptop,
   UserCheck,
-  ShieldCheck
+  ShieldCheck,
+  Save
 } from 'lucide-react';
 import { InspectionJob, ChecklistTemplate, StepResult, PhotoSlotData, PhotoType } from '../types/qc';
-import { qcService } from '../services/qcService';
+import { workerSessionApi } from '../services/workerSessionApi';
 import { getPhotoTypeInfo } from '../constants/photoTypes';
-import { detectDataFromPhoto } from '../services/aiDetectionService';
 import { generateDocxReport } from '../services/docxExportService';
 import { getDeviceMacAddress, getDeviceInfo } from '../utils/deviceTracker';
 
@@ -48,6 +48,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     minutesRemaining?: number;
     expiresAtFormatted?: string;
   } | null>(null);
+  const [sessionError, setSessionError] = useState('');
 
   const [stepResults, setStepResults] = useState<StepResult[]>([]);
   const [workerName, setWorkerName] = useState('');
@@ -62,15 +63,22 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   const [deviceInfo, setDeviceInfo] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submittedJob, setSubmittedJob] = useState<InspectionJob | null>(null);
   const [aiAnalyzingStepId, setAiAnalyzingStepId] = useState<string | null>(null);
 
   useEffect(() => {
-    const data = qcService.validateJobSession(jobId, token);
-    setSessionData(data);
+    let isMounted = true;
 
-    if (data.isValid && !data.isExpired && data.job && data.template) {
+    const loadSession = async () => {
+      try {
+        const data = await workerSessionApi.getSession(jobId, token);
+        if (!isMounted) return;
+        setSessionData(data);
+
+        if (data.isValid && !data.isExpired && data.job && data.template) {
       const autoMac = data.job.workerMac || getDeviceMacAddress();
       const autoDev = data.job.sessionTracker?.deviceInfo || getDeviceInfo();
 
@@ -81,9 +89,9 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       setLineInput(data.job.line || 'Chuyền 01');
       setShiftInput(data.job.shift || 'Ca Sáng (06:00 - 14:00)');
 
-      if (data.job.sessionTracker?.workerName) {
+      if (data.checkedInAt || data.job.sessionTracker?.workerName) {
         setIsCheckedIn(true);
-        setWorkerName(data.job.sessionTracker.workerName);
+        setWorkerName(data.job.sessionTracker?.workerName || data.job.workerName || '');
       } else {
         setWorkerName(data.job.workerName || '');
       }
@@ -125,10 +133,23 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       });
 
       setStepResults(initialResults);
-    }
+        }
+      } catch (error) {
+        console.error('Failed to load worker session:', error);
+        if (isMounted) {
+          setSessionError(error instanceof Error ? error.message : 'Không thể tải phiên kiểm định.');
+          setSessionData({ isValid: false, isExpired: false });
+        }
+      }
+    };
+
+    loadSession();
+    return () => {
+      isMounted = false;
+    };
   }, [jobId, token]);
 
-  const handleConfirmCheckIn = (e: React.FormEvent) => {
+  const handleConfirmCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!workerNameInput.trim()) {
       alert('Vui lòng nhập họ và tên công nhân mở link.');
@@ -138,17 +159,22 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     const finalMac = deviceMac.trim() || getDeviceMacAddress();
     const finalDev = deviceInfo.trim() || getDeviceInfo();
 
-    qcService.recordWorkerSessionCheckIn(jobId, token, {
-      workerName: workerNameInput.trim(),
-      workerId: workerIdInput.trim() || undefined,
-      line: lineInput.trim() || undefined,
-      shift: shiftInput.trim() || undefined,
-      deviceMac: finalMac,
-      deviceInfo: finalDev
-    });
+    try {
+      await workerSessionApi.checkIn(jobId, token, {
+        workerName: workerNameInput.trim(),
+        workerId: workerIdInput.trim() || undefined,
+        line: lineInput.trim() || undefined,
+        shift: shiftInput.trim() || undefined,
+        deviceInfo: `${finalDev} | Device ID: ${finalMac}`
+      });
 
-    setWorkerName(workerNameInput.trim());
-    setIsCheckedIn(true);
+      setDeviceMac(finalMac);
+      setDeviceInfo(finalDev);
+      setWorkerName(workerNameInput.trim());
+      setIsCheckedIn(true);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không thể check-in phiên kiểm định.');
+    }
   };
 
   // Loading state
@@ -174,7 +200,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           <div>
             <h2 className="text-xl font-bold text-slate-800">URL Không Hợp Lệ</h2>
             <p className="text-xs text-slate-500 mt-2">
-              Liên kết phiên kiểm tra không tồn tại hoặc đã bị hủy bởi QC Admin.
+              {sessionError || 'Liên kết phiên kiểm tra không tồn tại hoặc đã bị hủy bởi QC Admin.'}
             </p>
           </div>
           <button
@@ -240,70 +266,73 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     slotIndex: number, 
     file: File
   ) => {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const dataUrl = e.target?.result as string;
+    const step = template.steps.find(s => s.stepId === stepId);
+    const uploadForm = new FormData();
+    uploadForm.set('photo', file);
+    uploadForm.set('stepId', stepId);
+    uploadForm.set('slotIndex', String(slotIndex));
+    const uploadResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: uploadForm
+    });
+    if (!uploadResponse.ok) throw new Error('Không thể lưu ảnh lên hệ thống QC.');
+    const uploadedPhoto = await uploadResponse.json() as { id: string; photoUrl: string };
 
-      setStepResults(prev => prev.map(sr => {
-        if (sr.stepId !== stepId) return sr;
+    setStepResults(prev => prev.map(sr => {
+      if (sr.stepId !== stepId) return sr;
 
-        const updatedSlots = (sr.photoSlotsData || []).map(s => {
-          if (s.slotIndex === slotIndex) {
-            return { ...s, photoUrl: dataUrl };
-          }
-          return s;
+      const updatedSlots = (sr.photoSlotsData || []).map(s => {
+        if (s.slotIndex === slotIndex) {
+          return { ...s, photoUrl: uploadedPhoto.photoUrl };
+        }
+        return s;
+      });
+
+      const primaryPhoto = updatedSlots.find(s => s.photoUrl)?.photoUrl || sr.photoUrl;
+
+      return {
+        ...sr,
+        photoUrl: primaryPhoto,
+        photoSlotsData: updatedSlots
+      };
+    }));
+
+    // Gemini runs only in the server-side queue so worker devices cannot exhaust quota.
+    if (step?.enableAiDetection) {
+      setAiAnalyzingStepId(stepId);
+      try {
+        const analysisResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos/${encodeURIComponent(uploadedPhoto.id)}/analyze?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ detectType: step.aiDetectType || 'GENERAL' })
         });
+        if (!analysisResponse.ok) throw new Error('Không thể đưa tác vụ Gemini vào hàng đợi.');
+        const analysis = await analysisResponse.json() as { status: string; result_text?: string };
 
-        // Set primary photoUrl to first uploaded photo if empty
-        const primaryPhoto = updatedSlots.find(s => s.photoUrl)?.photoUrl || sr.photoUrl;
+        setStepResults(prev => prev.map(sr => {
+          if (sr.stepId !== stepId) return sr;
 
-        return {
-          ...sr,
-          photoUrl: primaryPhoto,
-          photoSlotsData: updatedSlots
-        };
-      }));
-
-      // Trigger AI Detection if step enables AI
-      const step = template.steps.find(s => s.stepId === stepId);
-      if (step?.enableAiDetection) {
-        const slotObj = (step.photoSlotConfigs || []).find(c => c.slotIndex === slotIndex);
-        const photoType = slotObj?.photoType || 'GENERAL_OTHER';
-
-        setAiAnalyzingStepId(stepId);
-        try {
-          const aiRes = await detectDataFromPhoto(dataUrl, {
-            detectType: step.aiDetectType || 'GENERAL',
-            photoType,
-            customPrompt: step.aiDetectPrompt
+          const updatedSlots = (sr.photoSlotsData || []).map(s => {
+            if (s.slotIndex === slotIndex) {
+              return { ...s, aiDetectedText: analysis.result_text || 'Đang chờ Gemini xử lý' };
+            }
+            return s;
           });
 
-          setStepResults(prev => prev.map(sr => {
-            if (sr.stepId !== stepId) return sr;
-
-            const updatedSlots = (sr.photoSlotsData || []).map(s => {
-              if (s.slotIndex === slotIndex) {
-                return { ...s, aiDetectedText: aiRes.detectedText };
-              }
-              return s;
-            });
-
-            return {
-              ...sr,
-              photoSlotsData: updatedSlots,
-              aiDetectedValue: aiRes.detectedText,
-              aiDetectStatus: aiRes.status,
-              textValue: sr.textValue || aiRes.detectedText
-            };
-          }));
-        } catch (err) {
-          console.error('AI detect error:', err);
-        } finally {
-          setAiAnalyzingStepId(null);
-        }
+          return {
+            ...sr,
+            photoSlotsData: updatedSlots,
+            aiDetectedValue: analysis.result_text || 'Gemini đang xếp hàng xử lý; có thể tiếp tục bước kiểm tra khác.',
+            aiDetectStatus: analysis.status === 'COMPLETED' ? 'SUCCESS' : 'WARNING',
+            textValue: sr.textValue || analysis.result_text || ''
+          };
+        }));
+      } catch (err) {
+        console.error('AI detect error:', err);
+      } finally {
+        setAiAnalyzingStepId(null);
       }
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   // Handles Step Status change (PASS / FAIL)
@@ -380,31 +409,52 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   }
 
   // Submit Worker Results
-  const handleSubmitResults = () => {
-    setIsSubmitting(true);
-    setTimeout(() => {
-      const res = qcService.submitWorkerSessionResults(
+  const workerInfoPayload = () => ({
+    workerName: workerName || workerNameInput || 'Công nhân Chuyền',
+    workerId: workerIdInput || undefined,
+    line: lineInput || undefined,
+    shift: shiftInput || undefined,
+    deviceInfo: `${deviceInfo || getDeviceInfo()} | Device ID: ${deviceMac || getDeviceMacAddress()}`
+  });
+
+  const handleSaveDraftResults = async () => {
+    setIsSavingDraft(true);
+    try {
+      await workerSessionApi.saveDraftResults(
         jobId,
         token,
         stepResults,
-        { 
-          workerName: workerName || workerNameInput || 'Công nhân Chuyền',
-          workerId: workerIdInput || undefined,
-          line: lineInput || undefined,
-          shift: shiftInput || undefined,
-          deviceMac: deviceMac || getDeviceMacAddress(),
-          deviceInfo: deviceInfo || getDeviceInfo()
-        }
+        workerInfoPayload()
+      );
+      setDraftSavedAt(new Date().toLocaleString('vi-VN'));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không thể lưu nháp kết quả kiểm tra.');
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
+  const handleSubmitResults = async () => {
+    setIsSubmitting(true);
+    try {
+      const res = await workerSessionApi.submitResults(
+        jobId,
+        token,
+        stepResults,
+        workerInfoPayload()
       );
 
-      setIsSubmitting(false);
       if (res.success && res.job) {
         setIsSubmitted(true);
         setSubmittedJob(res.job);
       } else {
         alert(res.message);
       }
-    }, 800);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không thể nộp kết quả kiểm tra.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Download Report Word
@@ -471,23 +521,23 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     <div className="min-h-screen bg-slate-900 text-slate-100 pb-12 font-sans">
       {/* Top Session Banner */}
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 shadow-md">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-4xl mx-auto flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-black text-sm shadow-sm">
               QC
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <h1 className="font-bold text-sm text-white">WORKER PORTAL SESSION</h1>
                 <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded-full text-[10px] font-bold">
                   24H LINK
                 </span>
               </div>
-              <p className="text-xs text-slate-400">{job.productName} ({job.batchNumber})</p>
+              <p className="truncate text-xs text-slate-400">{job.productName} ({job.batchNumber})</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
             {/* Countdown Badge */}
             <div className="px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 animate-pulse text-amber-400" />
@@ -507,24 +557,24 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       {/* Main Content Area */}
       <main className="max-w-4xl mx-auto px-4 pt-6 space-y-6">
         {/* Worker Info Card */}
-        <div className="p-4 bg-slate-800/80 border border-slate-700 rounded-2xl flex items-center justify-between gap-4">
+        <div className="p-4 bg-slate-800/80 border border-slate-700 rounded-2xl flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <div className="text-xs text-slate-400 font-semibold flex items-center gap-1.5">
               <UserCheck className="w-3.5 h-3.5 text-blue-400" />
               <span>Công nhân thực hiện:</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <input
                 type="text"
                 value={workerName}
                 onChange={(e) => setWorkerName(e.target.value)}
                 placeholder="Nhập tên công nhân..."
-                className="bg-slate-900 border border-slate-600 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none focus:border-blue-500 w-64"
+                className="w-full bg-slate-900 border border-slate-600 rounded-xl px-3 py-1.5 text-xs text-white font-bold focus:outline-none focus:border-blue-500 sm:w-64"
               />
               <button
                 type="button"
                 onClick={() => setIsCheckedIn(false)}
-                className="text-[11px] text-blue-400 hover:text-blue-300 font-semibold underline"
+                className="self-start text-[11px] text-blue-400 hover:text-blue-300 font-semibold underline sm:self-auto"
               >
                 Đổi Tên
               </button>
@@ -555,8 +605,8 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                 }`}
               >
                 {/* Step Header */}
-                <div className="flex items-start justify-between gap-3 border-b border-slate-700/80 pb-3">
-                  <div className="flex items-start gap-3">
+                <div className="flex flex-col gap-3 border-b border-slate-700/80 pb-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
                     <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
                       {idx + 1}
                     </span>
@@ -567,11 +617,11 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                   </div>
 
                   {/* Pass/Fail Status Buttons */}
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="grid grid-cols-2 gap-1.5 sm:flex sm:items-center sm:shrink-0">
                     <button
                       type="button"
                       onClick={() => handleStepStatusChange(step.stepId, 'PASS')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                         stepRes?.status === 'PASS'
                           ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
                           : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
@@ -584,7 +634,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     <button
                       type="button"
                       onClick={() => handleStepStatusChange(step.stepId, 'FAIL')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                         stepRes?.status === 'FAIL'
                           ? 'bg-red-600 text-white shadow-md shadow-red-500/20'
                           : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
@@ -599,7 +649,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                 {/* Photo Slots Section with Typed Badges */}
                 {photoSlots.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                    <div className="text-xs font-bold text-slate-300 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <span>Ảnh chụp minh chứng ({photoSlots.length} slot được yêu cầu):</span>
                       {step.enableAiDetection && (
                         <span className="text-[11px] text-purple-400 font-semibold flex items-center gap-1">
@@ -732,10 +782,34 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
         </div>
 
         {/* Footer Submission Controls */}
-        <div className="pt-4 flex items-center justify-end">
+        <div className="pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="text-xs text-slate-400 min-h-[18px]">
+            {draftSavedAt && (
+              <span>Đã lưu nháp lúc <strong className="text-slate-200">{draftSavedAt}</strong>. Chưa nộp chính thức.</span>
+            )}
+          </div>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2">
+          <button
+            onClick={handleSaveDraftResults}
+            disabled={isSavingDraft || isSubmitting}
+            className="w-full sm:w-auto px-6 py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-bold rounded-2xl border border-slate-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isSavingDraft ? (
+              <>
+                <RefreshCw className="w-5 h-5 animate-spin" />
+                <span>Đang lưu nháp...</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-5 h-5" />
+                <span>Lưu nháp chưa nộp</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={handleSubmitResults}
-            disabled={isSubmitting}
+            disabled={isSubmitting || isSavingDraft}
             className="w-full sm:w-auto px-8 py-3.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-2xl shadow-xl shadow-blue-600/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {isSubmitting ? (
@@ -750,6 +824,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
               </>
             )}
           </button>
+          </div>
         </div>
       </main>
     </div>

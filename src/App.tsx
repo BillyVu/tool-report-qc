@@ -6,11 +6,17 @@ import { InspectionsView } from './views/InspectionsView';
 import { AuditLogsView } from './views/AuditLogsView';
 import { SettingsView } from './views/SettingsView';
 import { WorkerSessionPortalView } from './views/WorkerSessionPortalView';
+import { LoginView } from './views/LoginView';
 import { InspectionJob } from './types/qc';
+import { clearStoredAdminApiKey, hasStoredAdminSession } from './services/adminAuth';
+import { adminApi, setAdminApiKey } from './services/adminApi';
+
+type AdminAuthState = 'checking' | 'authenticated' | 'unauthenticated';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'templates' | 'inspections' | 'audit' | 'settings'>('dashboard');
   const [selectedJobForReview, setSelectedJobForReview] = useState<InspectionJob | null>(null);
+  const [adminAuthState, setAdminAuthState] = useState<AdminAuthState>(() => hasStoredAdminSession() ? 'checking' : 'unauthenticated');
 
   // Worker Session URL parameters state
   const [workerSession, setWorkerSession] = useState<{ jobId: string; token: string } | null>(null);
@@ -25,6 +31,25 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (workerSession || adminAuthState !== 'checking') return;
+
+    let isActive = true;
+    void adminApi.getKpis()
+      .then(() => {
+        if (isActive) setAdminAuthState('authenticated');
+      })
+      .catch(() => {
+        clearStoredAdminApiKey();
+        setAdminApiKey('');
+        if (isActive) setAdminAuthState('unauthenticated');
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [adminAuthState, workerSession]);
+
   const handleExitWorkerSession = () => {
     setWorkerSession(null);
     // Clean URL query params without reloading
@@ -34,6 +59,14 @@ export default function App() {
   const handleSelectJobForReview = (job: InspectionJob) => {
     setSelectedJobForReview(job);
     setActiveTab('inspections');
+  };
+
+  const handleLogout = () => {
+    clearStoredAdminApiKey();
+    setAdminApiKey('');
+    setSelectedJobForReview(null);
+    setActiveTab('dashboard');
+    setAdminAuthState('unauthenticated');
   };
 
   // If opened via Worker Session URL, render the dedicated Session Portal
@@ -47,13 +80,26 @@ export default function App() {
     );
   }
 
+  if (adminAuthState === 'checking') {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-10 w-10 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+          <p className="text-sm font-semibold">Đang kiểm tra phiên đăng nhập...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (adminAuthState !== 'authenticated') {
+    return <LoginView onAuthenticated={() => setAdminAuthState('authenticated')} />;
+  }
+
   return (
     <AdminLayout
       activeTab={activeTab}
       setActiveTab={setActiveTab}
-      onSimulateWorkerJob={() => {
-        // Refresh triggers inside components automatically via service listener
-      }}
+      onLogout={handleLogout}
     >
       {activeTab === 'dashboard' && (
         <DashboardView
@@ -73,8 +119,11 @@ export default function App() {
 
       {activeTab === 'audit' && <AuditLogsView />}
 
-      {activeTab === 'settings' && <SettingsView />}
+      {activeTab === 'settings' && (
+        <SettingsView
+          onAuthUpdated={() => setAdminAuthState(hasStoredAdminSession() ? 'authenticated' : 'unauthenticated')}
+        />
+      )}
     </AdminLayout>
   );
 }
-

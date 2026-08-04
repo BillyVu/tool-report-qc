@@ -3,6 +3,7 @@ import { PhotoType } from '../constants/photoTypes';
 export type { PhotoType };
 export type JobStatus = 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
 export type StepStatus = 'PASS' | 'FAIL' | 'PENDING';
+export type StepModerationStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 export type StepInputType = 'PHOTO' | 'TEXT' | 'PHOTO_AND_TEXT';
 export type AiDetectType = 'IMEI_SERIAL' | 'OCR_TEXT' | 'COLOR_SCREEN' | 'GENERAL';
 
@@ -18,6 +19,13 @@ export interface PhotoSlotConfig {
   slotIndex: number;
   label: string;
   photoType: PhotoType;
+}
+
+export interface TextFieldConfig {
+  fieldIndex: number;
+  label: string;
+  placeholder?: string;
+  required?: boolean;
 }
 
 export interface PhotoSlotData {
@@ -38,6 +46,7 @@ export interface InspectionStep {
   inputType?: StepInputType; // 'PHOTO' | 'TEXT' | 'PHOTO_AND_TEXT'
   textInputLabel?: string;
   textInputPlaceholder?: string;
+  textFieldConfigs?: TextFieldConfig[];
   isRequiredText?: boolean;
   enableAiDetection?: boolean; // AI detect data from photos
   aiDetectType?: AiDetectType;
@@ -88,6 +97,10 @@ export interface StepResult {
   timestamp?: string;
   editedByAdmin?: boolean;
   originalNote?: string;
+  moderationStatus?: StepModerationStatus;
+  adminReviewNote?: string;
+  moderatedBy?: string;
+  moderatedAt?: string;
 }
 
 export interface AuditLogEntry {
@@ -126,6 +139,7 @@ export interface InspectionJob {
   updatedAt: string;
   completedAt?: string;
   stepResults: StepResult[];
+  templateSnapshot?: ChecklistTemplate;
   adminNotes?: string;
   exportCount?: number;
   lastExportedAt?: string;
@@ -134,6 +148,7 @@ export interface InspectionJob {
   sessionToken?: string;
   sessionCreatedAt?: string;
   sessionExpiresAt?: string; // ISO string 24h after export
+  sessionRevokedAt?: string;
   sessionExportCount?: number;
 
   // Worker & Device Tracking (MAC Address & Check-in)

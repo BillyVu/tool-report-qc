@@ -1,30 +1,32 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  X, 
-  Download, 
-  CheckCircle2, 
-  XCircle, 
-  Clock, 
-  Edit2, 
-  Check, 
-  UserCheck, 
-  Calendar, 
-  ShieldCheck, 
-  Sparkles, 
-  FileSpreadsheet, 
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  X,
+  Download,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Edit2,
+  Check,
+  ShieldCheck,
+  Sparkles,
   Maximize2,
   AlertTriangle,
   History,
   Camera,
-  Layers,
   FileText,
   Loader2,
-  Laptop
+  Laptop,
+  ClipboardCheck,
+  MessageSquareText,
+  ChevronLeft,
+  ChevronRight,
+  Images,
+  Save,
+  CircleDot
 } from 'lucide-react';
-import { InspectionJob, ChecklistTemplate } from '../../types/qc';
-import { qcService } from '../../services/qcService';
+import { InspectionJob, StepModerationStatus, StepResult } from '../../types/qc';
+import { adminApi } from '../../services/adminApi';
 import { generateDocxReport } from '../../services/docxExportService';
-import { detectDataFromPhoto } from '../../services/aiDetectionService';
 
 interface InspectionDetailDrawerProps {
   job: InspectionJob | null;
@@ -33,18 +35,59 @@ interface InspectionDetailDrawerProps {
   onJobUpdated: () => void;
 }
 
+type ReviewSummary = {
+  approved: number;
+  rejected: number;
+  pending: number;
+};
+
+const getPhotoCount = (step: StepResult) => step.photos?.length || (step.photoUrl ? 1 : 0);
+
+const getModerationTone = (status: StepModerationStatus | undefined) => {
+  if (status === 'APPROVED') {
+    return 'border-blue-200 bg-blue-50 text-blue-800';
+  }
+  if (status === 'REJECTED') {
+    return 'border-red-200 bg-red-50 text-red-800';
+  }
+  return 'border-amber-200 bg-amber-50 text-amber-800';
+};
+
+const getStepStatusTone = (status: StepResult['status']) => {
+  if (status === 'PASS') {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+  }
+  if (status === 'FAIL') {
+    return 'border-red-200 bg-red-50 text-red-800';
+  }
+  return 'border-amber-200 bg-amber-50 text-amber-800';
+};
+
+const formatDateTime = (value?: string) => {
+  if (!value) return 'Chưa có';
+  return new Date(value).toLocaleString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+};
+
 export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
   job,
   isOpen,
   onClose,
   onJobUpdated
 }) => {
-  if (!isOpen || !job) return null;
-
-  const [currentJob, setCurrentJob] = useState<InspectionJob>(job);
+  const [currentJob, setCurrentJob] = useState<InspectionJob | null>(job);
+  const [activeStepId, setActiveStepId] = useState<string | null>(job?.stepResults[0]?.stepId || null);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
-  const [editingNoteValue, setEditingNoteValue] = useState<string>('');
-  const [adminNotes, setAdminNotes] = useState<string>(job.adminNotes || '');
+  const [editingNoteValue, setEditingNoteValue] = useState('');
+  const [adminNotes, setAdminNotes] = useState(job?.adminNotes || '');
+  const [reviewNoteByStep, setReviewNoteByStep] = useState<Record<string, string>>({});
+  const [reviewingStepId, setReviewingStepId] = useState<string | null>(null);
+  const [isSavingAdminNotes, setIsSavingAdminNotes] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
 
@@ -52,6 +95,11 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
     if (job) {
       setCurrentJob(job);
       setAdminNotes(job.adminNotes || '');
+      setReviewNoteByStep(Object.fromEntries(job.stepResults.map((step) => [step.stepId, step.adminReviewNote || ''])));
+      setActiveStepId((previous) => {
+        if (previous && job.stepResults.some((step) => step.stepId === previous)) return previous;
+        return job.stepResults[0]?.stepId || null;
+      });
     }
   }, [job]);
 
@@ -69,488 +117,558 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, lightboxImageUrl, onClose]);
 
-  const template = qcService.getTemplateById(currentJob.templateId);
+  const template = currentJob?.templateSnapshot;
+
+  const reviewSummary = useMemo<ReviewSummary>(() => {
+    return (currentJob?.stepResults || []).reduce(
+      (summary, step) => {
+        if (step.moderationStatus === 'APPROVED') summary.approved += 1;
+        else if (step.moderationStatus === 'REJECTED') summary.rejected += 1;
+        else summary.pending += 1;
+        return summary;
+      },
+      { approved: 0, rejected: 0, pending: 0 },
+    );
+  }, [currentJob]);
+
+  const activeStepIndex = currentJob?.stepResults.findIndex((step) => step.stepId === activeStepId) ?? -1;
+  const activeStep = activeStepIndex >= 0 ? currentJob?.stepResults[activeStepIndex] : currentJob?.stepResults[0];
+  const activeStepDef = activeStep ? template?.steps.find((step) => step.stepId === activeStep.stepId) : undefined;
+  const activePhotoSlots = activeStepDef?.photoSlots || (activeStep?.photos ? activeStep.photos.map((photo) => photo.slotName) : []);
+  const activeRequiredPhotoCount = activeStepDef?.requiredPhotoCount ?? (activePhotoSlots.length || 1);
+  const activePhotoCount = activeStep ? getPhotoCount(activeStep) : 0;
+  const activeModerationStatus = activeStep?.moderationStatus || 'PENDING_REVIEW';
+  const activePhotos = activeStep?.photos?.length
+    ? activeStep.photos
+    : activeStep?.photoUrl
+      ? [{ url: activeStep.photoUrl, slotName: activeStep.stepId }]
+      : [];
+
+  if (!isOpen || !currentJob || !activeStep) return null;
 
   const handleStartEditNote = (stepId: string, currentNote: string) => {
     setEditingStepId(stepId);
     setEditingNoteValue(currentNote);
   };
 
-  const handleSaveEditNote = (stepId: string) => {
-    qcService.updateJobStepNote(currentJob.id, stepId, editingNoteValue);
+  const handleSaveEditNote = async (stepId: string) => {
+    const updated = await adminApi.updateJobStepNote(currentJob.id, stepId, editingNoteValue);
     setEditingStepId(null);
-    const updated = qcService.getJobById(currentJob.id);
-    if (updated) setCurrentJob({ ...updated });
+    setCurrentJob(updated);
     onJobUpdated();
   };
 
-  const handleStatusChange = (newStatus: InspectionJob['status']) => {
-    qcService.updateJobStatus(currentJob.id, newStatus, adminNotes);
-    const updated = qcService.getJobById(currentJob.id);
-    if (updated) setCurrentJob({ ...updated });
+  const handleStatusChange = async (newStatus: InspectionJob['status']) => {
+    const updated = await adminApi.updateJobStatus(currentJob.id, newStatus, adminNotes);
+    setCurrentJob(updated);
     onJobUpdated();
   };
 
-  const handleSaveAdminNotes = () => {
-    qcService.updateJobStatus(currentJob.id, currentJob.status, adminNotes);
-    const updated = qcService.getJobById(currentJob.id);
-    if (updated) setCurrentJob({ ...updated });
-    onJobUpdated();
+  const handleModerateStep = async (stepId: string, moderationStatus: StepModerationStatus) => {
+    setReviewingStepId(stepId);
+    try {
+      const updated = await adminApi.moderateJobStep(currentJob.id, stepId, moderationStatus, reviewNoteByStep[stepId] || '');
+      setCurrentJob(updated);
+      setReviewNoteByStep(Object.fromEntries(updated.stepResults.map((step) => [step.stepId, step.adminReviewNote || ''])));
+      onJobUpdated();
+    } finally {
+      setReviewingStepId(null);
+    }
+  };
+
+  const handleSaveAdminNotes = async () => {
+    setIsSavingAdminNotes(true);
+    try {
+      const updated = await adminApi.updateJobStatus(currentJob.id, currentJob.status, adminNotes);
+      setCurrentJob(updated);
+      onJobUpdated();
+    } finally {
+      setTimeout(() => setIsSavingAdminNotes(false), 500);
+    }
   };
 
   const handleExportDocx = async () => {
     setIsExporting(true);
     try {
       await generateDocxReport(currentJob, template);
-      const updated = qcService.getJobById(currentJob.id);
-      if (updated) setCurrentJob({ ...updated });
       onJobUpdated();
     } catch (e) {
       console.error('Export DOCX error:', e);
     } finally {
-      setTimeout(() => setIsExporting(false), 1200);
+      setTimeout(() => setIsExporting(false), 900);
     }
+  };
+
+  const goToStep = (direction: -1 | 1) => {
+    const nextIndex = Math.min(Math.max(activeStepIndex + direction, 0), currentJob.stepResults.length - 1);
+    setActiveStepId(currentJob.stepResults[nextIndex].stepId);
   };
 
   return (
     <>
-      <div 
-        className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end animate-fade-in cursor-pointer"
+      <div
+        className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex justify-end animate-fade-in cursor-pointer"
         onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            onClose();
-          }
+          if (e.target === e.currentTarget) onClose();
         }}
       >
-        <div 
-          className="bg-white w-full max-w-3xl h-full shadow-2xl border-l border-slate-200 flex flex-col overflow-hidden animate-slide-left cursor-default"
+        <div
+          className="bg-slate-100 w-full max-w-7xl h-full shadow-2xl border-l border-slate-800 flex flex-col overflow-hidden animate-slide-left cursor-default"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Drawer Top Header */}
-          <div className="bg-slate-900 text-white p-5 flex items-center justify-between shrink-0 border-b border-slate-800">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-xs font-bold bg-blue-600 text-white px-2.5 py-0.5 rounded-md">
-                  {currentJob.id}
-                </span>
-                <span className="text-xs text-slate-400">Lô: <strong>{currentJob.batchNumber}</strong></span>
-              </div>
-              <h2 className="text-lg font-bold mt-1 text-slate-100">{currentJob.productName}</h2>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {/* Export Word Button */}
-              <button
-                onClick={handleExportDocx}
-                disabled={isExporting}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
-              >
-                <Download className={`w-4 h-4 ${isExporting ? 'animate-bounce' : ''}`} />
-                <span>{isExporting ? 'Đang Tổng Hợp Word...' : 'Xuất Báo Cáo Word (.docx)'}</span>
-              </button>
-
-              <button
-                onClick={onClose}
-                className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Drawer Body Scroll Area */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {/* Status & Overview Banner */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="text-xs font-bold uppercase text-slate-500">Trạng Thái Kiểm Duyệt Lô QC</div>
-                <div className="flex items-center gap-2">
-                  {currentJob.status === 'COMPLETED' && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>ĐẠT TIÊU CHUẨN (PASS)</span>
-                    </span>
-                  )}
-                  {currentJob.status === 'FAILED' && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-red-100 text-red-800 border border-red-300">
-                      <XCircle className="w-4 h-4" />
-                      <span>CÓ LỖI (FAIL)</span>
-                    </span>
-                  )}
-                  {currentJob.status === 'IN_PROGRESS' && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-amber-100 text-amber-800 border border-amber-300">
-                      <Clock className="w-4 h-4 animate-spin" />
-                      <span>ĐANG LÀM TẠI XƯỞNG</span>
-                    </span>
-                  )}
+          <div className="relative bg-slate-950 text-white px-5 py-4 pr-14 shrink-0 border-b border-slate-800">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs font-bold bg-sky-500 text-white px-2.5 py-1 rounded-md">
+                    {currentJob.id}
+                  </span>
+                  <span className="text-xs text-slate-400">Lô <strong className="text-slate-200">{currentJob.batchNumber}</strong></span>
+                  <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${currentJob.status === 'COMPLETED' ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200' : currentJob.status === 'FAILED' ? 'border-red-400/40 bg-red-500/15 text-red-200' : 'border-amber-400/40 bg-amber-500/15 text-amber-200'}`}>
+                    {currentJob.status === 'COMPLETED' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    {currentJob.status === 'FAILED' && <XCircle className="w-3.5 h-3.5" />}
+                    {currentJob.status === 'IN_PROGRESS' && <Clock className="w-3.5 h-3.5" />}
+                    {currentJob.status}
+                  </span>
+                </div>
+                <h2 className="mt-2 truncate text-xl font-bold text-slate-50">{currentJob.productName}</h2>
+                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+                  <span>Mã SP: <strong className="text-slate-200">{currentJob.productCode}</strong></span>
+                  <span>Công nhân: <strong className="text-slate-200">{currentJob.workerName}</strong></span>
+                  <span>{currentJob.line} - {currentJob.shift}</span>
+                  <span>Tạo: {formatDateTime(currentJob.createdAt)}</span>
                 </div>
               </div>
 
-              {/* Status Override Selector */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-600">Đổi Trạng Thái:</span>
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <select
                   value={currentJob.status}
-                  onChange={(e) => handleStatusChange(e.target.value as any)}
-                  className="text-xs font-bold bg-white border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => handleStatusChange(e.target.value as InspectionJob['status'])}
+                  className="h-9 min-w-0 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  title="Đổi trạng thái lô QC"
                 >
-                  <option value="COMPLETED">✅ COMPLETED (ĐẠT)</option>
-                  <option value="FAILED">❌ FAILED (LỖI)</option>
-                  <option value="IN_PROGRESS">⏳ IN_PROGRESS (ĐANG LÀM)</option>
+                  <option value="COMPLETED">COMPLETED - ĐẠT</option>
+                  <option value="FAILED">FAILED - LỖI</option>
+                  <option value="IN_PROGRESS">IN_PROGRESS - ĐANG LÀM</option>
                 </select>
+                <button
+                  onClick={handleExportDocx}
+                  disabled={isExporting}
+                  className="h-9 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  <span>{isExporting ? 'Đang xuất...' : 'Tải Word'}</span>
+                </button>
               </div>
             </div>
+            <button
+              onClick={onClose}
+              className="absolute right-3 top-3 h-9 w-9 flex items-center justify-center text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+              title="Đóng"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
-            {/* Metadata Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white p-4 rounded-xl border border-slate-200 text-xs">
-              <div>
-                <span className="text-slate-400 block font-medium">Mã dòng SP:</span>
-                <span className="font-bold text-slate-800">{currentJob.productCode}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block font-medium">Công nhân:</span>
-                <span className="font-bold text-slate-800">{currentJob.workerName}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block font-medium">Chuyền sản xuất:</span>
-                <span className="font-bold text-slate-800">{currentJob.line}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block font-medium">Thời gian bắt đầu:</span>
-                <span className="font-bold text-slate-800">
-                  {new Date(currentJob.createdAt).toLocaleTimeString('vi-VN')}
-                </span>
-              </div>
-            </div>
-
-            {/* Session Tracking & MAC Address Card */}
-            {(currentJob.workerMac || currentJob.sessionTracker || (currentJob.sessionAccessLogs && currentJob.sessionAccessLogs.length > 0)) && (
-              <div className="bg-slate-900 text-white p-4 rounded-xl space-y-3 shadow-md border border-slate-800">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span className="font-bold text-xs text-white uppercase tracking-wider">Tracking Session Link & Đăng Nhập Thiết Bị</span>
-                  </div>
-                  {currentJob.workerMac && (
-                    <span className="px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[11px] font-bold border border-emerald-500/30 flex items-center gap-1">
-                      <Laptop className="w-3 h-3" />
-                      MAC: {currentJob.workerMac}
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                  <div className="bg-slate-800 p-2.5 rounded-lg border border-slate-700 space-y-0.5">
-                    <span className="text-slate-400 block text-[11px]">Người mở link:</span>
-                    <span className="font-bold text-white">{currentJob.workerName || 'Công nhân'}</span>
-                  </div>
-                  <div className="bg-slate-800 p-2.5 rounded-lg border border-slate-700 space-y-0.5">
-                    <span className="text-slate-400 block text-[11px]">Địa chỉ MAC thiết bị:</span>
-                    <span className="font-mono font-bold text-emerald-400">{currentJob.workerMac || 'Chưa ghi nhận'}</span>
-                  </div>
-                  <div className="bg-slate-800 p-2.5 rounded-lg border border-slate-700 space-y-0.5">
-                    <span className="text-slate-400 block text-[11px]">Trình duyệt / OS:</span>
-                    <span className="font-bold text-slate-200">{currentJob.sessionTracker?.deviceInfo || 'Chrome (Mobile Web)'}</span>
-                  </div>
-                </div>
-
-                {currentJob.sessionAccessLogs && currentJob.sessionAccessLogs.length > 0 && (
-                  <div className="space-y-1.5 pt-1">
-                    <span className="text-[11px] font-semibold text-slate-400 block">Lịch sử truy cập session link (Tracking Logs):</span>
-                    <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
-                      {currentJob.sessionAccessLogs.map((log) => (
-                        <div key={log.id} className="flex flex-wrap items-center justify-between gap-1 text-[11px] bg-slate-800/80 px-2.5 py-1.5 rounded border border-slate-700/60">
-                          <span className="text-slate-400 font-mono">{log.timestamp}</span>
-                          <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">{log.action}</span>
-                          <span className="text-slate-200 font-semibold">{log.workerName}</span>
-                          <span className="text-emerald-400 font-mono text-[10px]">{log.deviceMac}</span>
-                        </div>
-                      ))}
+          <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[320px_minmax(0,1fr)]">
+            <aside className="max-h-[32dvh] min-h-0 border-b border-slate-200 bg-white flex flex-col lg:max-h-none lg:border-b-0 lg:border-r">
+              <div className="border-b border-slate-200 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Tiến độ duyệt nhanh</div>
+                    <div className="mt-1 text-sm font-bold text-slate-950">
+                      {reviewSummary.approved}/{currentJob.stepResults.length} bước đã duyệt
                     </div>
                   </div>
-                )}
+                  <div className="h-11 w-11 rounded-lg bg-slate-900 text-white flex items-center justify-center">
+                    <ClipboardCheck className="w-5 h-5" />
+                  </div>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full ${reviewSummary.rejected > 0 ? 'bg-red-500' : 'bg-blue-600'}`}
+                    style={{ width: `${currentJob.stepResults.length ? (reviewSummary.approved / currentJob.stepResults.length) * 100 : 0}%` }}
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px] font-bold">
+                  <div className="rounded-lg border border-blue-100 bg-blue-50 px-2 py-2 text-blue-800">{reviewSummary.approved} duyệt</div>
+                  <div className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-2 text-amber-800">{reviewSummary.pending} chờ</div>
+                  <div className="rounded-lg border border-red-100 bg-red-50 px-2 py-2 text-red-800">{reviewSummary.rejected} từ chối</div>
+                </div>
               </div>
-            )}
 
-            {/* Step Results Detailed Cards */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Kết Quả Thu Thập Ảnh & Ghi Chú Từng Bước ({currentJob.stepResults.length} bước)
-                </h3>
-                <span className="text-xs text-slate-500">Bấm icon cây bút để sửa chính tả ghi chú</span>
-              </div>
-
-              <div className="space-y-4">
-                {currentJob.stepResults.map((sr) => {
-                  const stepDef = template?.steps.find(s => s.stepId === sr.stepId);
-                  const isEditingThisNote = editingStepId === sr.stepId;
-                  const photoSlots = stepDef?.photoSlots || (sr.photos ? sr.photos.map(p => p.slotName) : []);
-                  const requiredCount = stepDef?.requiredPhotoCount ?? (photoSlots.length || 1);
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
+                {currentJob.stepResults.map((step, index) => {
+                  const stepDef = template?.steps.find((item) => item.stepId === step.stepId);
+                  const moderationStatus = step.moderationStatus || 'PENDING_REVIEW';
+                  const isActive = step.stepId === activeStep.stepId;
+                  const requiredPhotoCount = stepDef?.requiredPhotoCount ?? ((stepDef?.photoSlots?.length || step.photos?.length) || 1);
+                  const photoCount = getPhotoCount(step);
 
                   return (
-                    <div
-                      key={sr.stepId}
-                      className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3"
+                    <button
+                      key={step.stepId}
+                      type="button"
+                      onClick={() => setActiveStepId(step.stepId)}
+                      className={`w-full rounded-lg border p-3 text-left transition-all ${
+                        isActive
+                          ? 'border-slate-900 bg-slate-900 text-white shadow-md'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-800'
+                      }`}
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-xs bg-slate-900 text-white px-2.5 py-1 rounded-md">
-                            {sr.stepId}
-                          </span>
-                          <span className="font-bold text-sm text-slate-900">
-                            {stepDef?.title || `Bước ${sr.stepId}`}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {stepDef?.sampleSize && (
-                            <span className="text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded">
-                              Sample: {stepDef.sampleSize}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`flex h-6 w-6 items-center justify-center rounded-md text-[11px] font-black ${isActive ? 'bg-white text-slate-950' : 'bg-slate-100 text-slate-700'}`}>
+                              {index + 1}
                             </span>
-                          )}
+                            <span className="truncate text-xs font-bold">{stepDef?.title || `Bước ${step.stepId}`}</span>
+                          </div>
+                          <div className={`mt-2 flex flex-wrap items-center gap-1.5 text-[10px] ${isActive ? 'text-slate-300' : 'text-slate-500'}`}>
+                            <span>{photoCount}/{requiredPhotoCount} ảnh</span>
+                            <span>{step.status}</span>
+                            {step.textValue && <span>Có text</span>}
+                          </div>
+                        </div>
+                        {moderationStatus === 'APPROVED' && <CheckCircle2 className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-300' : 'text-blue-600'}`} />}
+                        {moderationStatus === 'REJECTED' && <XCircle className={`w-4 h-4 shrink-0 ${isActive ? 'text-red-300' : 'text-red-600'}`} />}
+                        {moderationStatus === 'PENDING_REVIEW' && <CircleDot className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-300' : 'text-amber-600'}`} />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
 
-                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                            sr.status === 'PASS' ? 'bg-emerald-100 text-emerald-800' :
-                            sr.status === 'FAIL' ? 'bg-red-100 text-red-800' :
-                            'bg-amber-100 text-amber-800'
-                          }`}>
-                            {sr.status}
-                          </span>
+              {(currentJob.workerMac || currentJob.sessionTracker) && (
+                <div className="border-t border-slate-200 bg-slate-50 p-3 text-xs">
+                  <div className="flex items-center gap-2 font-bold text-slate-800">
+                    <Laptop className="w-4 h-4 text-slate-500" />
+                    <span>Thiết bị công nhân</span>
+                  </div>
+                  <div className="mt-2 space-y-1 text-[11px] text-slate-600">
+                    <div>MAC: <span className="font-mono font-bold text-slate-900">{currentJob.workerMac || currentJob.sessionTracker?.deviceMac || 'Chưa ghi nhận'}</span></div>
+                    <div className="truncate">OS: {currentJob.sessionTracker?.deviceInfo || 'Chưa ghi nhận'}</div>
+                  </div>
+                </div>
+              )}
+            </aside>
+
+            <main className="min-h-0 flex-1 overflow-y-auto bg-slate-100">
+              <div className="mx-auto max-w-6xl space-y-4 p-4 lg:p-5">
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_420px]">
+                  <section className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <div className="border-b border-slate-200 px-4 py-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-md bg-slate-900 px-2.5 py-1 font-mono text-xs font-bold text-white">
+                              {activeStep.stepId}
+                            </span>
+                            <span className={`rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${getStepStatusTone(activeStep.status)}`}>
+                              Worker: {activeStep.status}
+                            </span>
+                            <span className={`rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${getModerationTone(activeModerationStatus)}`}>
+                              {activeModerationStatus === 'APPROVED' ? 'Admin đã duyệt' : activeModerationStatus === 'REJECTED' ? 'Admin từ chối' : 'Chờ admin duyệt'}
+                            </span>
+                          </div>
+                          <h3 className="mt-2 text-base font-bold text-slate-950">{activeStepDef?.title || `Bước ${activeStep.stepId}`}</h3>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            {activeStepDef?.passCriteria || 'Đạt tiêu chuẩn nhà máy'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => goToStep(-1)}
+                            disabled={activeStepIndex <= 0}
+                            className="h-8 w-8 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center"
+                            title="Bước trước"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => goToStep(1)}
+                            disabled={activeStepIndex >= currentJob.stepResults.length - 1}
+                            className="h-8 w-8 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 flex items-center justify-center"
+                            title="Bước sau"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
+                    </div>
 
-                      {/* Criteria & Slot Specifications */}
-                      <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 space-y-1.5 text-xs text-slate-700">
-                        <div><strong>Tiêu chuẩn:</strong> {stepDef?.passCriteria || 'Đạt tiêu chuẩn nhà máy'}</div>
-                        {photoSlots.length > 0 && (
-                          <div className="text-[11px] text-slate-600 flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200">
-                            <span className="font-bold text-blue-700 flex items-center gap-1">
-                              <Camera className="w-3.5 h-3.5" /> Quy cách chụp ({requiredCount} ảnh):
-                            </span>
-                            {photoSlots.map((slot, sIdx) => (
-                              <span key={sIdx} className="bg-white px-2 py-0.5 rounded border border-slate-200 text-slate-700 text-[10px] font-medium">
+                    <div className="p-4">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-2 font-bold text-slate-700">
+                          <Images className="w-4 h-4 text-slate-500" />
+                          <span>Ảnh bằng chứng ({activePhotoCount}/{activeRequiredPhotoCount})</span>
+                        </div>
+                        {activePhotoCount < activeRequiredPhotoCount && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            Thiếu ảnh
+                          </span>
+                        )}
+                      </div>
+
+                      {activePhotos.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {activePhotos.map((photo, index) => (
+                            <button
+                              key={`${photo.url}-${index}`}
+                              type="button"
+                              onClick={() => setLightboxImageUrl(photo.url)}
+                              className="group overflow-hidden rounded-lg border border-slate-200 bg-slate-950 text-left shadow-sm"
+                            >
+                              <div className="relative aspect-[4/3] overflow-hidden">
+                                <img
+                                  src={photo.url}
+                                  alt={photo.slotName}
+                                  className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/45 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold backdrop-blur">
+                                    <Maximize2 className="w-4 h-4" />
+                                    Phóng to
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="border-t border-white/10 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200 truncate">
+                                {photo.slotName}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex min-h-[360px] items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm font-semibold text-slate-400">
+                          Chưa có ảnh từ công nhân
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
+                  <section className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+                    <div className="border-b border-slate-200 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-950">Bằng chứng & ghi chú</h3>
+                          <p className="mt-0.5 text-[11px] font-medium text-slate-500">Tất cả dữ liệu cần duyệt của bước hiện tại</p>
+                        </div>
+                        {activeStepDef?.sampleSize && (
+                          <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">
+                            Sample: {activeStepDef.sampleSize}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 p-4">
+                      {activePhotoSlots.length > 0 && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase text-slate-500">
+                            <Camera className="w-3.5 h-3.5" />
+                            Quy cách chụp
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {activePhotoSlots.map((slot, index) => (
+                              <span key={`${slot}-${index}`} className="rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700">
                                 {slot}
                               </span>
                             ))}
                           </div>
+                        </div>
+                      )}
+
+                      {activeStep.textValue && (
+                        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                          <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-blue-900">
+                            <FileText className="w-3.5 h-3.5 text-blue-600" />
+                            Dữ liệu nhập từ công nhân
+                          </div>
+                          <div className="rounded-md border border-blue-200 bg-white p-2 font-mono text-xs font-bold text-blue-950">
+                            {activeStep.textValue}
+                          </div>
+                        </div>
+                      )}
+
+                      {activeStep.aiDetectedValue && (
+                        <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-2 text-[11px] font-bold text-violet-900">
+                              <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                              AI Gemini Detection
+                            </span>
+                            {activeStep.aiMatchStatus && (
+                              <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${activeStep.aiMatchStatus === 'MATCH' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                                {activeStep.aiMatchStatus === 'MATCH' ? 'Khớp' : 'Cần kiểm tra'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="rounded-md border border-violet-200 bg-white p-2 font-mono text-xs font-bold text-violet-950">
+                            {activeStep.aiDetectedValue}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="rounded-lg border border-slate-200 bg-white">
+                        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+                          <span className="flex items-center gap-2 text-[11px] font-bold uppercase text-slate-500">
+                            <MessageSquareText className="w-3.5 h-3.5" />
+                            Ghi chú công nhân
+                          </span>
+                          {editingStepId !== activeStep.stepId && (
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditNote(activeStep.stepId, activeStep.note)}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                              Sửa
+                            </button>
+                          )}
+                        </div>
+
+                        {editingStepId === activeStep.stepId ? (
+                          <div className="space-y-2 p-3">
+                            <textarea
+                              value={editingNoteValue}
+                              onChange={(e) => setEditingNoteValue(e.target.value)}
+                              rows={4}
+                              className="w-full rounded-lg border border-blue-300 p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingStepId(null)}
+                                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                              >
+                                Hủy
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEditNote(activeStep.stepId)}
+                                className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-500"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                Lưu
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="p-3 text-xs leading-5 text-slate-800">
+                            {activeStep.note || <span className="italic text-slate-400">Chưa có ghi chú</span>}
+                            {activeStep.editedByAdmin && (
+                              <div className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-blue-700">
+                                <History className="w-3 h-3" />
+                                Đã hiệu chỉnh bởi QC Admin
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
 
-                      {/* Content: Photos & Notes/Text Inputs */}
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-1">
-                        {/* Captured Photos Grid */}
-                        <div className="space-y-2">
-                          <span className="text-[11px] font-bold text-slate-500 uppercase flex items-center justify-between">
-                            <span>Ảnh thu thập thực tế ({sr.photos?.length || (sr.photoUrl ? 1 : 0)}/{requiredCount}):</span>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                            <ShieldCheck className="w-4 h-4 text-blue-700" />
+                            Ghi chú kiểm duyệt
                           </span>
-
-                          {/* Render Multi-slot photos if available */}
-                          {sr.photos && sr.photos.length > 0 ? (
-                            <div className="grid grid-cols-2 gap-2">
-                              {sr.photos.map((photo, pIdx) => (
-                                <div key={pIdx} className="space-y-1">
-                                  <div
-                                    onClick={() => setLightboxImageUrl(photo.url)}
-                                    className="relative group cursor-pointer rounded-lg overflow-hidden border border-slate-200 bg-slate-100 aspect-video flex items-center justify-center"
-                                  >
-                                    <img
-                                      src={photo.url}
-                                      alt={photo.slotName}
-                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                                    />
-                                    <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-bold gap-1">
-                                      <Maximize2 className="w-3 h-3" />
-                                      <span>Phóng to</span>
-                                    </div>
-                                  </div>
-                                  <div className="text-[10px] font-semibold text-slate-600 truncate" title={photo.slotName}>
-                                    {photo.slotName}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : sr.photoUrl ? (
-                            <div 
-                              onClick={() => setLightboxImageUrl(sr.photoUrl || null)}
-                              className="relative group cursor-pointer rounded-lg overflow-hidden border border-slate-200 bg-slate-100 aspect-video flex items-center justify-center"
-                            >
-                              <img
-                                src={sr.photoUrl}
-                                alt={sr.stepId}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                              />
-                              <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1">
-                                <Maximize2 className="w-4 h-4" />
-                                <span>Phóng to</span>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="aspect-video bg-slate-100 rounded-lg border border-slate-200 flex items-center justify-center text-xs text-slate-400 italic">
-                              Chưa chụp ảnh
-                            </div>
+                          {activeStep.moderatedAt && (
+                            <span className="text-[10px] font-semibold text-slate-500">{formatDateTime(activeStep.moderatedAt)}</span>
                           )}
-
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            Mapped Tag: {stepDef?.mapping?.imageTag || '{{photo}}'}
-                          </div>
                         </div>
-
-                        {/* Text Inputs & Notes & AI Detection Results */}
-                        <div className="lg:col-span-2 space-y-2 flex flex-col justify-between">
-                          <div className="space-y-2">
-                            {/* Text Input Value if applicable */}
-                            {sr.textValue && (
-                              <div className="p-2.5 bg-blue-50/80 border border-blue-200 rounded-lg space-y-1">
-                                <span className="text-[11px] font-bold text-blue-900 flex items-center gap-1">
-                                  <FileText className="w-3.5 h-3.5 text-blue-600" />
-                                  <span>Dữ liệu nhập từ công nhân ({stepDef?.textInputLabel || 'Dữ liệu'}):</span>
-                                </span>
-                                <div className="text-xs font-mono font-bold text-blue-950 bg-white p-1.5 rounded border border-blue-200">
-                                  {sr.textValue}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* AI Detected Value Banner */}
-                            {sr.aiDetectedValue && (
-                              <div className="p-2.5 bg-purple-50 border border-purple-200 rounded-lg space-y-1">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[11px] font-bold text-purple-900 flex items-center gap-1">
-                                    <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                                    <span>AI Gemini Detection Result:</span>
-                                  </span>
-                                  {sr.aiMatchStatus && (
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                                      sr.aiMatchStatus === 'MATCH' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                                    }`}>
-                                      {sr.aiMatchStatus === 'MATCH' ? '✓ Khớp 100%' : '⚠️ Cần kiểm tra lại'}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs font-mono font-bold text-purple-950 bg-white p-1.5 rounded border border-purple-200">
-                                  {sr.aiDetectedValue}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Worker Notes & Editor */}
-                            <div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-slate-500 uppercase">Ghi chú công nhân:</span>
-                                {!isEditingThisNote && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStartEditNote(sr.stepId, sr.note)}
-                                    className="text-xs text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
-                                  >
-                                    <Edit2 className="w-3 h-3" />
-                                    <span>Chỉnh sửa ghi chú</span>
-                                  </button>
-                                )}
-                              </div>
-
-                              {isEditingThisNote ? (
-                                <div className="space-y-2 mt-1">
-                                  <textarea
-                                    value={editingNoteValue}
-                                    onChange={(e) => setEditingNoteValue(e.target.value)}
-                                    rows={3}
-                                    className="w-full p-2 text-xs border border-blue-400 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                  />
-                                  <div className="flex items-center gap-2 justify-end">
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditingStepId(null)}
-                                      className="px-2.5 py-1 text-xs border rounded-md text-slate-600"
-                                    >
-                                      Hủy
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSaveEditNote(sr.stepId)}
-                                      className="px-3 py-1 text-xs bg-blue-600 text-white rounded-md font-bold flex items-center gap-1"
-                                    >
-                                      <Check className="w-3.5 h-3.5" />
-                                      <span>Lưu thay đổi</span>
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 mt-1">
-                                  {sr.note || <span className="text-slate-400 italic">Chưa có ghi chú</span>}
-                                  {sr.editedByAdmin && (
-                                    <div className="mt-1.5 text-[10px] text-blue-600 font-semibold flex items-center gap-1">
-                                      <History className="w-3 h-3" />
-                                      <span>[Đã hiệu chỉnh bởi QC Admin - Đã lưu Audit Log]</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="text-[10px] text-slate-400 font-mono pt-1">
-                            Mapped Tag: {stepDef?.mapping?.noteTag || '{{note}}'}
-                          </div>
-                        </div>
+                        <textarea
+                          value={reviewNoteByStep[activeStep.stepId] || ''}
+                          onChange={(e) => setReviewNoteByStep(prev => ({ ...prev, [activeStep.stepId]: e.target.value }))}
+                          placeholder="Lý do duyệt hoặc yêu cầu chụp lại..."
+                          rows={4}
+                          className="w-full rounded-lg border border-slate-300 bg-white p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+                  </section>
+                </div>
 
-            {/* Admin Directive Notes Box */}
-            <div className="bg-blue-50/60 p-4 rounded-xl border border-blue-200 space-y-2">
-              <label className="block text-xs font-bold text-blue-900">
-                Ghi Chú Chỉ Đạo Khắc Phục Của Trưởng Phòng QC Admin (Xuất kèm Báo cáo Word)
-              </label>
-              <textarea
-                value={adminNotes}
-                onChange={(e) => setAdminNotes(e.target.value)}
-                onBlur={handleSaveAdminNotes}
-                placeholder="Nhập ghi chú hoặc yêu cầu tổ trưởng chuyền xử lý..."
-                rows={2}
-                className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+                <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                    <div>
+                      <label className="mb-2 block text-xs font-bold text-slate-900">
+                        Ghi chú chỉ đạo của trưởng phòng QC Admin
+                      </label>
+                      <textarea
+                        value={adminNotes}
+                        onChange={(e) => setAdminNotes(e.target.value)}
+                        placeholder="Nhập chỉ đạo xử lý, yêu cầu tổ trưởng chuyền hoặc ghi chú xuất kèm báo cáo Word..."
+                        rows={2}
+                        className="w-full rounded-lg border border-slate-300 bg-white p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveAdminNotes}
+                      disabled={isSavingAdminNotes}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {isSavingAdminNotes ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      Lưu ghi chú lô
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </main>
           </div>
 
-          {/* Drawer Footer Actions */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
-            <span className="text-xs text-slate-500">
-              Đã xuất file: <strong>{currentJob.exportCount || 0} lần</strong>
-            </span>
-            <button
-              onClick={handleExportDocx}
-              disabled={isExporting}
-              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              <span>Tải Báo Cáo Word (.docx)</span>
-            </button>
+          <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3">
+            <div className="mx-auto flex max-w-7xl flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                <span>Bước <strong className="text-slate-900">{activeStepIndex + 1}</strong>/{currentJob.stepResults.length}</span>
+                <span>Xuất Word: <strong className="text-slate-900">{currentJob.exportCount || 0}</strong> lần</span>
+                <span>Cập nhật: {formatDateTime(currentJob.updatedAt)}</span>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                <button
+                  type="button"
+                  onClick={() => handleModerateStep(activeStep.stepId, 'REJECTED')}
+                  disabled={reviewingStepId === activeStep.stepId}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-red-500 disabled:opacity-60"
+                >
+                  {reviewingStepId === activeStep.stepId ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                  Từ chối bước này
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleModerateStep(activeStep.stepId, 'APPROVED')}
+                  disabled={reviewingStepId === activeStep.stepId}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-xs font-bold text-white shadow-sm hover:bg-blue-500 disabled:opacity-60"
+                >
+                  {reviewingStepId === activeStep.stepId ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Duyệt bước này
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Photo Lightbox Zoom Modal */}
       {lightboxImageUrl && (
-        <div 
-          className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
+        <div
+          className="fixed inset-0 z-[60] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
           onClick={() => setLightboxImageUrl(null)}
         >
-          <div className="relative max-w-4xl max-h-[90vh] bg-black rounded-2xl overflow-hidden shadow-2xl p-2">
+          <div className="relative max-w-6xl max-h-[92vh] overflow-hidden rounded-lg bg-black p-2 shadow-2xl">
             <button
               onClick={() => setLightboxImageUrl(null)}
-              className="absolute top-4 right-4 p-2 bg-slate-900/80 text-white rounded-full hover:bg-slate-800 transition-colors"
+              className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-slate-900/80 text-white transition-colors hover:bg-slate-800"
+              title="Đóng ảnh"
             >
               <X className="w-6 h-6" />
             </button>
             <img
               src={lightboxImageUrl}
-              alt="Zoomed QC Photo"
-              className="max-w-full max-h-[85vh] object-contain rounded-xl mx-auto"
+              alt="Ảnh QC phóng to"
+              className="mx-auto max-h-[88vh] max-w-full rounded object-contain"
             />
           </div>
         </div>
