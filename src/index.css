@@ -76,7 +76,8 @@ canvas {
 }
 
 .qc-builder-header {
-  background: var(--qc-bg-panel);
+  /* Keep the editing title in the same continuous surface as the form. */
+  background: var(--qc-bg-body);
   border-bottom: 1px solid var(--qc-border);
 }
 

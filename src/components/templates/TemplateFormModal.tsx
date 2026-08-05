@@ -572,7 +572,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
           <div className="qc-builder-header text-white p-4 flex items-start justify-between gap-3 shrink-0 sm:p-5">
             <div className="min-w-0">
               <h2 className="text-base font-bold sm:text-lg">
-                {isEdit ? 'Chỉnh Sửa Mẫu Checklist QC' : 'Tạo Mẫu Checklist & Cấu Hình Word DOCX Mới'}
+                {isEdit ? 'Chỉnh sửa mẫu checklist QC' : 'Tạo Mẫu Checklist & Cấu Hình Word DOCX Mới'}
               </h2>
               <p className="text-xs text-slate-400">
                 Thiết lập quy trình kiểm tra các bước và cấu hình thẻ ánh xạ vào file Word mẫu
