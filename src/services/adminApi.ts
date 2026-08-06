@@ -1,4 +1,4 @@
-import { AuditLogEntry, ChecklistTemplate, DashboardKPI, InspectionJob, StepModerationStatus } from '../types/qc';
+import { AuditLogEntry, ChecklistTemplate, DashboardKPI, DefectItem, InspectionJob, OtherInfoData, PackagingInfoData, StepModerationStatus } from '../types/qc';
 import { PhotoTypeOption } from '../constants/photoTypes';
 import { loadStoredAdminApiKey, saveStoredAdminApiKey } from './adminAuth';
 import { mapInspectionJob } from './workerSessionApi';
@@ -14,6 +14,9 @@ interface CreateJobPayload {
   workerName?: string;
   shift?: string;
   line?: string;
+  defectsFindingData?: DefectItem[];
+  packagingInfoData?: PackagingInfoData;
+  otherInfoData?: OtherInfoData;
 }
 
 interface AdminApiOptions {
@@ -70,8 +73,8 @@ export function getAdminApiBaseUrl(options: AdminApiOptions = {}): string {
   if (envUrl !== undefined && envUrl.trim() !== '') {
     return envUrl.trim().replace(/\/+$/, '');
   }
-  // When running locally in browser dev mode, use relative path to allow Vite dev proxy without CORS issues
-  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+  // In any browser environment, default to relative path '' so requests share the page origin and use Vite proxy without CORS errors
+  if (typeof window !== 'undefined') {
     return '';
   }
   return 'https://qc.apexdev.website';

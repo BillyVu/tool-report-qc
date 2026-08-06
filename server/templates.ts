@@ -11,6 +11,13 @@ export interface ChecklistTemplatePayload {
   createdAt?: string;
   updatedAt?: string;
   steps?: unknown[];
+  defectsFindingData?: unknown[];
+  packagingInfoData?: Record<string, unknown>;
+  otherInfoData?: Record<string, unknown>;
+  cartonSpec?: string;
+  deviceSpec?: string;
+  clientName?: string;
+  supplierName?: string;
 }
 
 export interface TemplateRow {
@@ -45,6 +52,13 @@ export function serializeTemplateRow(row: TemplateRow): Required<ChecklistTempla
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     steps: Array.isArray(definition.steps) ? definition.steps : [],
+    defectsFindingData: (definition as any).defectsFindingData || [],
+    packagingInfoData: (definition as any).packagingInfoData || {},
+    otherInfoData: (definition as any).otherInfoData || {},
+    cartonSpec: (definition as any).cartonSpec || '',
+    deviceSpec: (definition as any).deviceSpec || '',
+    clientName: (definition as any).clientName || '',
+    supplierName: (definition as any).supplierName || '',
   };
 }
 
@@ -60,6 +74,13 @@ export function templateDbParams(template: ChecklistTemplatePayload, externalId 
   const definition = {
     docxTemplateName: template.docxTemplateName?.trim() || 'Mau_Bao_Cao_QC_Chuan.docx',
     steps: template.steps,
+    defectsFindingData: (template as any).defectsFindingData || [],
+    packagingInfoData: (template as any).packagingInfoData || {},
+    otherInfoData: (template as any).otherInfoData || {},
+    cartonSpec: (template as any).cartonSpec || '',
+    deviceSpec: (template as any).deviceSpec || '',
+    clientName: (template as any).clientName || '',
+    supplierName: (template as any).supplierName || '',
   };
 
   return {

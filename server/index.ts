@@ -92,7 +92,7 @@ async function getSession(jobId: string, token: string) {
   const result = await db.query(
     `SELECT s.*, j.external_id AS job_external_id, j.batch_number, j.product_code, j.product_name, j.status,
             j.step_results, j.template_snapshot, j.worker_id AS job_worker_id, j.worker_name AS job_worker_name,
-            j.shift, j.line,
+            j.shift, j.line, j.defects_finding_data, j.packaging_info_data, j.other_info_data,
             COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
        FROM worker_sessions s JOIN inspection_jobs j ON j.id = s.job_id
        LEFT JOIN LATERAL (
@@ -122,6 +122,9 @@ function serializeWorkerSession(session: any) {
       id: session.job_external_id, batchNumber: session.batch_number, productCode: session.product_code,
       productName: session.product_name, status: session.status, stepResults,
       workerId: session.job_worker_id, workerName: session.job_worker_name, shift: session.shift, line: session.line,
+      defectsFindingData: session.defects_finding_data || session.template_snapshot?.defectsFindingData || [],
+      packagingInfoData: session.packaging_info_data || session.template_snapshot?.packagingInfoData || {},
+      otherInfoData: session.other_info_data || session.template_snapshot?.otherInfoData || {},
     },
     template: session.template_snapshot,
     expiresAt: session.expires_at,
@@ -157,6 +160,9 @@ async function getHydratedJobById(jobId: string) {
   return {
     ...row,
     step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
+    defectsFindingData: row.defects_finding_data || row.template_snapshot?.defectsFindingData || [],
+    packagingInfoData: row.packaging_info_data || row.template_snapshot?.packagingInfoData || {},
+    otherInfoData: row.other_info_data || row.template_snapshot?.otherInfoData || {},
     evidence_photos: undefined,
   };
 }
@@ -436,14 +442,18 @@ app.delete('/api/admin/photo-types/:type', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
-  const { externalId, batchNumber, productCode, productName, templateId, templateSnapshot, workerId, workerName, shift, line } = req.body;
+  const { externalId, batchNumber, productCode, productName, templateId, templateSnapshot, workerId, workerName, shift, line, defectsFindingData, packagingInfoData, otherInfoData } = req.body;
   if (![externalId, batchNumber, productCode, productName, templateSnapshot].every(Boolean)) {
     return res.status(400).json({ error: 'externalId, batchNumber, productCode, productName, and templateSnapshot are required.' });
   }
   const stepResults = buildInitialStepResults(templateSnapshot);
+  const initialDefects = defectsFindingData || templateSnapshot?.defectsFindingData || [];
+  const initialPackaging = packagingInfoData || templateSnapshot?.packagingInfoData || {};
+  const initialOther = otherInfoData || templateSnapshot?.otherInfoData || {};
+
   const job = await db.query(
-    `INSERT INTO inspection_jobs (external_id, batch_number, product_code, product_name, template_id, template_snapshot, step_results, worker_id, worker_name, shift, line)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    `INSERT INTO inspection_jobs (external_id, batch_number, product_code, product_name, template_id, template_snapshot, step_results, worker_id, worker_name, shift, line, defects_finding_data, packaging_info_data, other_info_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
     [
       externalId,
       batchNumber,
@@ -456,10 +466,18 @@ app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
       workerName || null,
       shift || null,
       line || null,
+      toJsonbParam(initialDefects),
+      toJsonbParam(initialPackaging),
+      toJsonbParam(initialOther),
     ],
   );
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_CREATED')`, [job.rows[0].id]);
-  res.status(201).json(job.rows[0]);
+  res.status(201).json({
+    ...job.rows[0],
+    defectsFindingData: job.rows[0].defects_finding_data,
+    packagingInfoData: job.rows[0].packaging_info_data,
+    otherInfoData: job.rows[0].other_info_data,
+  });
 });
 
 app.get('/api/admin/templates', requireAdmin, async (_req, res) => {
@@ -524,6 +542,7 @@ app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {
     `SELECT j.external_id, j.batch_number, j.product_code, j.product_name, j.template_id, j.status,
             j.worker_id, j.worker_name, j.shift, j.line, j.created_at, j.updated_at, j.completed_at,
             j.step_results, j.template_snapshot, j.admin_notes, j.export_count, j.last_exported_at,
+            j.defects_finding_data, j.packaging_info_data, j.other_info_data,
             s.token_value AS session_token, s.created_at AS session_created_at, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at,
             COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
        FROM inspection_jobs j
@@ -553,6 +572,9 @@ app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {
   res.json(jobs.rows.map((row) => ({
     ...row,
     step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
+    defectsFindingData: row.defects_finding_data || row.template_snapshot?.defectsFindingData || [],
+    packagingInfoData: row.packaging_info_data || row.template_snapshot?.packagingInfoData || {},
+    otherInfoData: row.other_info_data || row.template_snapshot?.otherInfoData || {},
     evidence_photos: undefined,
   })));
 });
@@ -562,6 +584,7 @@ app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
     `SELECT j.external_id, j.batch_number, j.product_code, j.product_name, j.template_id, j.status,
             j.worker_id, j.worker_name, j.shift, j.line, j.created_at, j.updated_at, j.completed_at,
             j.step_results, j.template_snapshot, j.admin_notes, j.export_count, j.last_exported_at,
+            j.defects_finding_data, j.packaging_info_data, j.other_info_data,
             s.created_at AS session_created_at, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at,
             COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
        FROM inspection_jobs j
@@ -594,6 +617,9 @@ app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
   res.json({
     ...row,
     step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
+    defectsFindingData: row.defects_finding_data || row.template_snapshot?.defectsFindingData || [],
+    packagingInfoData: row.packaging_info_data || row.template_snapshot?.packagingInfoData || {},
+    otherInfoData: row.other_info_data || row.template_snapshot?.otherInfoData || {},
     evidence_photos: undefined,
   });
 });
@@ -1067,21 +1093,27 @@ app.get('/api/worker-sessions/:jobId/analyses/:analysisId', workerSessionGuard, 
 
 app.post('/api/worker-sessions/:jobId/draft', workerSessionGuard, async (req, res) => {
   const session = res.locals.workerSession;
-  const { stepResults, workerInfo } = req.body;
+  const { stepResults, workerInfo, defectsFindingData, packagingInfoData, otherInfoData } = req.body;
   if (!Array.isArray(stepResults)) return res.status(400).json({ error: 'stepResults must be an array.' });
   await db.query(
     `UPDATE inspection_jobs
         SET step_results = $1,
             worker_name = COALESCE($2, worker_name), worker_id = COALESCE($3, worker_id),
             shift = COALESCE($4, shift), line = COALESCE($5, line),
+            defects_finding_data = CASE WHEN $6::jsonb IS NOT NULL THEN $6::jsonb ELSE defects_finding_data END,
+            packaging_info_data = CASE WHEN $7::jsonb IS NOT NULL THEN $7::jsonb ELSE packaging_info_data END,
+            other_info_data = CASE WHEN $8::jsonb IS NOT NULL THEN $8::jsonb ELSE other_info_data END,
             updated_at = now(), version = version + 1
-      WHERE id = $6 RETURNING *`,
+      WHERE id = $9 RETURNING *`,
     [
       toJsonbParam(stepResults),
       workerInfo?.workerName || null,
       workerInfo?.workerId || null,
       workerInfo?.shift || null,
       workerInfo?.line || null,
+      defectsFindingData ? toJsonbParam(defectsFindingData) : null,
+      packagingInfoData ? toJsonbParam(packagingInfoData) : null,
+      otherInfoData ? toJsonbParam(otherInfoData) : null,
       session.job_id,
     ],
   );
@@ -1096,7 +1128,7 @@ app.post('/api/worker-sessions/:jobId/draft', workerSessionGuard, async (req, re
 
 app.post('/api/worker-sessions/:jobId/submit', workerSessionGuard, async (req, res) => {
   const session = res.locals.workerSession;
-  const { stepResults, workerInfo } = req.body;
+  const { stepResults, workerInfo, defectsFindingData, packagingInfoData, otherInfoData } = req.body;
   if (!Array.isArray(stepResults)) return res.status(400).json({ error: 'stepResults must be an array.' });
   const failed = stepResults.some((step) => step?.status === 'FAIL');
   const status = failed ? 'FAILED' : 'COMPLETED';
@@ -1105,8 +1137,11 @@ app.post('/api/worker-sessions/:jobId/submit', workerSessionGuard, async (req, r
         SET step_results = $1, status = $2::qc_job_status, completed_at = now(),
             worker_name = COALESCE($3, worker_name), worker_id = COALESCE($4, worker_id),
             shift = COALESCE($5, shift), line = COALESCE($6, line),
+            defects_finding_data = CASE WHEN $7::jsonb IS NOT NULL THEN $7::jsonb ELSE defects_finding_data END,
+            packaging_info_data = CASE WHEN $8::jsonb IS NOT NULL THEN $8::jsonb ELSE packaging_info_data END,
+            other_info_data = CASE WHEN $9::jsonb IS NOT NULL THEN $9::jsonb ELSE other_info_data END,
             updated_at = now(), version = version + 1
-      WHERE id = $7 RETURNING *`,
+      WHERE id = $10 RETURNING *`,
     [
       toJsonbParam(stepResults),
       status,
@@ -1114,6 +1149,9 @@ app.post('/api/worker-sessions/:jobId/submit', workerSessionGuard, async (req, r
       workerInfo?.workerId || null,
       workerInfo?.shift || null,
       workerInfo?.line || null,
+      defectsFindingData ? toJsonbParam(defectsFindingData) : null,
+      packagingInfoData ? toJsonbParam(packagingInfoData) : null,
+      otherInfoData ? toJsonbParam(otherInfoData) : null,
       session.job_id,
     ],
   );

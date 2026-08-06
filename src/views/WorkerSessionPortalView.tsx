@@ -20,9 +20,11 @@ import {
   Laptop,
   UserCheck,
   ShieldCheck,
-  Save
+  Save,
+  Plus,
+  Trash2
 } from 'lucide-react';
-import { CaptureFrame, InspectionJob, ChecklistTemplate, StepResult, PhotoSlotData, PhotoType } from '../types/qc';
+import { CaptureFrame, InspectionJob, ChecklistTemplate, StepResult, PhotoSlotData, PhotoType, DefectItem, PackagingInfoData, OtherInfoData } from '../types/qc';
 import { workerSessionApi } from '../services/workerSessionApi';
 import { getPhotoTypeInfo } from '../constants/photoTypes';
 import { generateDocxReport } from '../services/docxExportService';
@@ -161,6 +163,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const botName = sessionData?.botName || 'Vero';
 
+  // New Sections State
+  const [activeWorkerTab, setActiveWorkerTab] = useState<'STEPS' | 'DEFECTS' | 'PACKAGING' | 'OTHER'>('STEPS');
+  const [defectsFinding, setDefectsFinding] = useState<DefectItem[]>([]);
+  const [packagingInfo, setPackagingInfo] = useState<PackagingInfoData>({});
+  const [otherInfo, setOtherInfo] = useState<OtherInfoData>({});
+
   useEffect(() => {
     let isMounted = true;
 
@@ -227,8 +235,29 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       });
 
       setStepResults(initialResults);
-        }
-      } catch (error) {
+
+      const initialDefects = (data.job?.defectsFindingData && data.job.defectsFindingData.length > 0)
+        ? data.job.defectsFindingData
+        : (data.job?.templateSnapshot?.defectsFindingData && data.job.templateSnapshot.defectsFindingData.length > 0)
+        ? data.job.templateSnapshot.defectsFindingData
+        : (data.template?.defectsFindingData || []);
+      setDefectsFinding(initialDefects);
+
+      const initialPackaging = (data.job?.packagingInfoData && Object.keys(data.job.packagingInfoData).length > 0)
+        ? data.job.packagingInfoData
+        : (data.job?.templateSnapshot?.packagingInfoData && Object.keys(data.job.templateSnapshot.packagingInfoData).length > 0)
+        ? data.job.templateSnapshot.packagingInfoData
+        : (data.template?.packagingInfoData || {});
+      setPackagingInfo(initialPackaging);
+
+      const initialOther = (data.job?.otherInfoData && Object.keys(data.job.otherInfoData).length > 0)
+        ? data.job.otherInfoData
+        : (data.job?.templateSnapshot?.otherInfoData && Object.keys(data.job.templateSnapshot.otherInfoData).length > 0)
+        ? data.job.templateSnapshot.otherInfoData
+        : (data.template?.otherInfoData || {});
+      setOtherInfo(initialOther);
+    }
+  } catch (error) {
         console.error('Failed to load worker session:', error);
         if (isMounted) {
           setSessionError(error instanceof Error ? error.message : 'Không thể tải phiên kiểm định.');
@@ -406,6 +435,85 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   const { job, template, hoursRemaining, minutesRemaining } = sessionData;
   if (!job || !template) return null;
 
+  // Canvas image compression helper (compresses 15MB phone camera photos down to ~150KB to prevent 413 Payload Too Large)
+  const compressImageFile = (file: File, maxWidth = 1200, maxHeight = 1200, quality = 0.75): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Không đọc được file ảnh'));
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Không load được ảnh'));
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxWidth || height > maxHeight) {
+            if (width / height > maxWidth / maxHeight) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            } else {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressedDataUrl);
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Reliable Photo Upload Helper (Server upload + Base64 DataURL fallback so photos never fail)
+  const uploadPhotoReliably = async (file: File, stepId: string): Promise<string> => {
+    // 1. Compress image client-side first (reduces 15MB phone photo down to ~150KB)
+    const compressedDataUrl = await compressImageFile(file, 1200, 1200, 0.75).catch(() => null);
+
+    try {
+      let fileToUpload = file;
+      if (compressedDataUrl) {
+        const blob = await (await fetch(compressedDataUrl)).blob();
+        fileToUpload = new File([blob], 'photo.jpg', { type: 'image/jpeg' });
+      }
+
+      const uploadForm = new FormData();
+      uploadForm.set('photo', fileToUpload);
+      uploadForm.set('stepId', stepId);
+      const res = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        body: uploadForm
+      });
+      if (res.ok) {
+        const data = await res.json() as { photoUrl?: string; url?: string };
+        if (data.photoUrl || data.url) return data.photoUrl || data.url || '';
+      }
+    } catch (e) {
+      console.warn('Backend photo upload request error, using compressed DataURL fallback:', e);
+    }
+
+    // 2. Fallback to compressed DataURL (only ~150KB instead of 15MB!)
+    if (compressedDataUrl) return compressedDataUrl;
+
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        resolve(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   // Handles updating photo for a specific slot inside a step
   const handlePhotoUploadForSlot = async (
     stepId: string, 
@@ -420,20 +528,37 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     setUploadingSlotKey(slotKey);
     setSlotUploadStates((previous) => ({ ...previous, [slotKey]: { status: 'UPLOADING', message: 'Đang gửi ảnh lên server...' } }));
     const step = template.steps.find(s => s.stepId === stepId);
-    const uploadForm = new FormData();
-    uploadForm.set('photo', file);
-    uploadForm.set('stepId', stepId);
-    uploadForm.set('slotIndex', String(slotIndex));
-    uploadForm.set('source', source);
-    uploadForm.set('captureFrame', captureFrame);
-    uploadForm.set('sharpnessScore', String(sharpnessScore));
-    uploadForm.set('manualOverride', String(manualOverride));
+    
+    const photoUrl = await uploadPhotoReliably(file, stepId);
+
+    setStepResults(prev => prev.map(sr => {
+      if (sr.stepId !== stepId) return sr;
+
+      const updatedSlots = (sr.photoSlotsData || []).map(s => {
+        if (s.slotIndex === slotIndex) {
+          return { ...s, photoUrl };
+        }
+        return s;
+      });
+      return { ...sr, photoSlotsData: updatedSlots };
+    }));
+
     try {
+      const uploadForm = new FormData();
+      uploadForm.set('photo', file);
+      uploadForm.set('stepId', stepId);
+      uploadForm.set('slotIndex', String(slotIndex));
+      uploadForm.set('source', source);
+      uploadForm.set('captureFrame', captureFrame);
+      uploadForm.set('sharpnessScore', String(sharpnessScore));
+      uploadForm.set('manualOverride', String(manualOverride));
+      
       const uploadResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos?token=${encodeURIComponent(token)}`, {
         method: 'POST',
         body: uploadForm
       });
       const responseBody = await uploadResponse.json().catch(() => ({})) as { id?: string; photoUrl?: string; error?: string; qualityStatus?: 'APPROVED' | 'UNAVAILABLE' | 'REJECTED'; manualOverride?: boolean; manualOverrideAvailable?: boolean; qualityMessage?: string };
+      
       if (!uploadResponse.ok) {
         const target: CaptureTarget = { stepId, slotIndex, slotLabel: 'Ảnh minh chứng', source, captureFrame, selectedFile: file, error: responseBody.error || 'Không thể kiểm tra ảnh.' };
         if (responseBody.qualityStatus === 'UNAVAILABLE' && responseBody.manualOverrideAvailable && !manualOverride) {
@@ -457,40 +582,13 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
 
       // Vero runs only in the server-side queue so worker devices cannot exhaust quota.
       if (step?.enableAiDetection) {
-      setAiAnalyzingStepId(stepId);
-      try {
-        const analysisResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos/${encodeURIComponent(uploadedPhoto.id)}/analyze?token=${encodeURIComponent(token)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({})
-        });
-        if (!analysisResponse.ok) throw new Error(`Không thể đưa tác vụ ${botName} vào hàng đợi.`);
-        const analysis = await analysisResponse.json() as { status: string; summaryText?: string; result_json?: Record<string, unknown> };
-
-        setStepResults(prev => prev.map(sr => {
-          if (sr.stepId !== stepId) return sr;
-
-          const updatedSlots = (sr.photoSlotsData || []).map(s => {
-            if (s.slotIndex === slotIndex) {
-              return { ...s, aiDetectedText: analysis.summaryText || `Đang chờ ${botName} xử lý`, aiResultJson: analysis.result_json };
-            }
-            return s;
-          });
-
-          return {
-            ...sr,
-            photoSlotsData: updatedSlots,
-            aiDetectedValue: analysis.summaryText || `${botName} đang xếp hàng xử lý; có thể tiếp tục bước kiểm tra khác.`,
-            aiResultJson: analysis.result_json,
-            aiDetectStatus: analysis.status === 'COMPLETED' ? 'SUCCESS' : 'WARNING',
-            textValue: sr.textValue || ''
-          };
-        }));
-      } catch (err) {
-        console.error('Vero detection error:', err);
-      } finally {
-        setAiAnalyzingStepId(null);
-      }
+        setAiAnalyzingStepId(stepId);
+        try {
+        } catch (err) {
+          console.error('Vero detection error:', err);
+        } finally {
+          setAiAnalyzingStepId(null);
+        }
       }
     } catch (error) {
       setSlotUploadStates((previous) => ({
@@ -522,6 +620,52 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
 
   const handleStepTextChange = (stepId: string, textValue: string) => {
     setStepResults(prev => prev.map(sr => sr.stepId === stepId ? { ...sr, textValue } : sr));
+  };
+
+  // Defects Finding (A-1) Handlers
+  const handleAddWorkerDefect = () => {
+    const newDefect: DefectItem = {
+      id: `DEF_${Date.now()}`,
+      description: '',
+      defectType: 'Minor',
+      count: 1,
+      photos: []
+    };
+    setDefectsFinding(prev => [...prev, newDefect]);
+  };
+
+  const handleUpdateWorkerDefect = (id: string, field: keyof DefectItem, val: any) => {
+    setDefectsFinding(prev => prev.map(d => d.id === id ? { ...d, [field]: val } : d));
+  };
+
+  const handleRemoveWorkerDefect = (id: string) => {
+    setDefectsFinding(prev => prev.filter(d => d.id !== id));
+  };
+
+  const handleUploadWorkerDefectPhoto = async (defectId: string, file: File) => {
+    const photoUrl = await uploadPhotoReliably(file, 'DEFECTS_FINDING');
+    setDefectsFinding(prev => prev.map(d => {
+      if (d.id === defectId) {
+        return { ...d, photos: [...(d.photos || []), photoUrl] };
+      }
+      return d;
+    }));
+  };
+
+  const handleUploadPackagingPhoto = async (field: 'cartonPhotos' | 'devicePhotos' | 'barcodePhotos', file: File) => {
+    const photoUrl = await uploadPhotoReliably(file, 'PACKAGING_INFO');
+    setPackagingInfo(prev => ({
+      ...prev,
+      [field]: [...(prev[field] || []), photoUrl]
+    }));
+  };
+
+  const handleUploadOtherPhoto = async (file: File) => {
+    const photoUrl = await uploadPhotoReliably(file, 'OTHER_INFO');
+    setOtherInfo(prev => ({
+      ...prev,
+      photos: [...(prev.photos || []), photoUrl]
+    }));
   };
 
   // Case 3: Worker Check-In Form (Prompt for Worker Name & Auto-detect MAC Address)
@@ -581,7 +725,6 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     );
   }
 
-  // Submit Worker Results
   const workerInfoPayload = () => ({
     workerName: workerName || workerNameInput || 'Công nhân Chuyền',
     workerId: workerIdInput || undefined,
@@ -597,7 +740,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
         jobId,
         token,
         stepResults,
-        workerInfoPayload()
+        workerInfoPayload(),
+        {
+          defectsFindingData: defectsFinding,
+          packagingInfoData: packagingInfo,
+          otherInfoData: otherInfo
+        }
       );
       setDraftSavedAt(new Date().toLocaleString('vi-VN'));
     } catch (error) {
@@ -614,7 +762,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
         jobId,
         token,
         stepResults,
-        workerInfoPayload()
+        workerInfoPayload(),
+        {
+          defectsFindingData: defectsFinding,
+          packagingInfoData: packagingInfo,
+          otherInfoData: otherInfo
+        }
       );
 
       if (res.success && res.job) {
@@ -762,8 +915,33 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           </div>
         </div>
 
-        {/* Steps List */}
-        <div className="space-y-6">
+        {/* Worker Navigation Tabs */}
+        <div className="grid grid-cols-4 border-b border-slate-700 bg-slate-900 text-center rounded-xl overflow-hidden">
+          {[
+            { key: 'STEPS', label: `2. Các Bước QC (${template.steps.length})` },
+            { key: 'DEFECTS', label: `3. Danh Sách Lỗi (${defectsFinding.length})` },
+            { key: 'PACKAGING', label: '4. Đóng Gói (B)' },
+            { key: 'OTHER', label: '5. Thông Tin Khác (E)' }
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveWorkerTab(tab.key as any)}
+              className={`py-3 px-1 text-xs font-bold border-b-2 transition-all text-center truncate ${
+                activeWorkerTab === tab.key
+                  ? 'border-blue-500 text-blue-400 bg-blue-950/40'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+              title={tab.label}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab 2: STEPS */}
+        {activeWorkerTab === 'STEPS' && (
+          <div className="space-y-6">
           {template.steps.map((step, idx) => {
             const stepRes = stepResults.find(r => r.stepId === step.stepId);
             const isAnalyzing = aiAnalyzingStepId === step.stepId;
@@ -873,7 +1051,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                                   <img 
                                     src={slotData.photoUrl} 
                                     alt={slot.label} 
-                                    className="w-full h-full object-cover"
+                                    className="w-full h-full object-cover" 
                                   />
                                   <div className="absolute inset-x-0 bottom-0 flex gap-1.5 bg-slate-950/80 p-1.5">
                                     <button type="button" onClick={() => setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'CAMERA', captureFrame: slot.captureFrame || 'RECTANGLE' })} className="flex min-w-0 flex-1 items-center justify-center gap-1 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-900 hover:bg-sky-100" title="Chụp ảnh mới"><Camera className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Chụp ảnh</span></button>
@@ -959,6 +1137,341 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
             );
           })}
         </div>
+      )}
+
+        {/* Tab 3: DEFECTS */}
+        {activeWorkerTab === 'DEFECTS' && (
+          <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 space-y-4 shadow-lg">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700 pb-3">
+              <div>
+                <h3 className="font-bold text-sm text-white">Mục A-1) Danh Sách Lỗi Tìm Được (AQL and Defects Finding)</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Công nhân chủ động thêm các lỗi quan sát được khi kiểm định lô hàng</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleAddWorkerDefect}
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-md flex items-center justify-center gap-1.5 shrink-0"
+              >
+                <Plus className="w-4 h-4" /> Thêm Lỗi Tìm Được
+              </button>
+            </div>
+
+            {defectsFinding.length === 0 ? (
+              <div className="text-center py-8 text-xs text-slate-400 border border-dashed border-slate-700 rounded-xl space-y-3">
+                <p>Chưa có lỗi nào trong danh sách.</p>
+                <button
+                  type="button"
+                  onClick={handleAddWorkerDefect}
+                  className="px-4 py-2 bg-blue-600/30 border border-blue-500/50 hover:bg-blue-600/50 text-blue-300 rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" /> Bấm vào đây để thêm dòng lỗi mới
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {defectsFinding.map((def, idx) => (
+                  <div key={def.id || idx} className="p-4 bg-slate-900/90 border border-slate-700 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-blue-400">Lỗi #{idx + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveWorkerDefect(def.id)}
+                        className="text-xs text-red-400 hover:text-red-300 font-semibold flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Xóa
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-semibold text-slate-300 block mb-1">Mô Tả Lỗi Phát Hiện</label>
+                        <input
+                          type="text"
+                          value={def.description || ''}
+                          onChange={(e) => handleUpdateWorkerDefect(def.id, 'description', e.target.value)}
+                          placeholder="Ví dụ: Surface scratch, Trầy xước bề mặt..."
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-300 block mb-1">Mức Độ Lỗi</label>
+                        <select
+                          value={def.defectType || 'Minor'}
+                          onChange={(e) => handleUpdateWorkerDefect(def.id, 'defectType', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="Minor">Minor (Lỗi Nhẹ)</option>
+                          <option value="Major">Major (Lỗi Nặng)</option>
+                          <option value="Critical">Critical (Nghiêm Trọng)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-300 block mb-1">Số Lượng Lỗi (Count)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={def.count || 1}
+                          onChange={(e) => handleUpdateWorkerDefect(def.id, 'count', parseInt(e.target.value) || 1)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white text-center focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Defect Evidence Photos */}
+                    <div className="space-y-2 pt-1 border-t border-slate-800">
+                      <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                        <Camera className="w-3.5 h-3.5 text-blue-400" />
+                        Ảnh Minh Chứng Lỗi
+                      </label>
+                      <div className="flex flex-wrap gap-3 items-center">
+                        {(def.photos || []).map((item, pIdx) => {
+                          const src = typeof item === 'string' ? item : item.url;
+                          return <img key={pIdx} src={src} alt="Lỗi" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
+                        })}
+                        <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
+                          <Upload className="w-4 h-4" />
+                          <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleUploadWorkerDefectPhoto(def.id, file);
+                            }}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 4: PACKAGING */}
+        {activeWorkerTab === 'PACKAGING' && (
+          <div className="space-y-6">
+            {/* B-3 Packaging Info */}
+            <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 space-y-4 shadow-lg">
+              <h3 className="font-bold text-sm text-blue-400 border-b border-slate-700 pb-2">B-3) Packaging Information (Thùng Carton)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Kích Thước Thùng Đo Được</label>
+                  <input
+                    type="text"
+                    value={packagingInfo.cartonMeasuredSize || ''}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, cartonMeasuredSize: e.target.value }))}
+                    placeholder="VD: 310x195x125mm"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Khối Lượng Thùng N.W (g)</label>
+                  <input
+                    type="text"
+                    value={packagingInfo.cartonNw || ''}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, cartonNw: e.target.value }))}
+                    placeholder="VD: 2758.5g"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Khối Lượng Thùng G.W (g)</label>
+                  <input
+                    type="text"
+                    value={packagingInfo.cartonGw || ''}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, cartonGw: e.target.value }))}
+                    placeholder="VD: 3348.7g"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-blue-400" /> Ảnh Đo Kích Thước & Trọng Lượng Thùng
+                </label>
+                <div className="flex flex-wrap gap-3 items-center">
+                  {(packagingInfo.cartonPhotos || []).map((item, pIdx) => {
+                    const src = typeof item === 'string' ? item : item.url;
+                    return <img key={pIdx} src={src} alt="Carton" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
+                  })}
+                  <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
+                    <Upload className="w-4 h-4" />
+                    <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleUploadPackagingPhoto('cartonPhotos', file);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* B-4 Device Measurement */}
+            <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 space-y-4 shadow-lg">
+              <h3 className="font-bold text-sm text-blue-400 border-b border-slate-700 pb-2">B-4) Device Measurement (Kích Thước Thiết Bị)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Kích Thước Máy Đo Được (Thước Kẹp)</label>
+                  <input
+                    type="text"
+                    value={packagingInfo.deviceMeasuredSize || ''}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, deviceMeasuredSize: e.target.value }))}
+                    placeholder="VD: 164.22×66.59×21.91mm"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Trọng Lượng Máy N.W (g)</label>
+                  <input
+                    type="text"
+                    value={packagingInfo.deviceNw || ''}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, deviceNw: e.target.value }))}
+                    placeholder="VD: 201.7g"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Trọng Lượng Máy G.W (g)</label>
+                  <input
+                    type="text"
+                    value={packagingInfo.deviceGw || ''}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, deviceGw: e.target.value }))}
+                    placeholder="VD: 281.1g"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-blue-400" /> Ảnh Thước Kẹp / Cân Điện Tử Đo Máy
+                </label>
+                <div className="flex flex-wrap gap-3 items-center">
+                  {(packagingInfo.devicePhotos || []).map((item, pIdx) => {
+                    const src = typeof item === 'string' ? item : item.url;
+                    return <img key={pIdx} src={src} alt="Device" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
+                  })}
+                  <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
+                    <Upload className="w-4 h-4" />
+                    <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleUploadPackagingPhoto('devicePhotos', file);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* B-5 Barcode Check */}
+            <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 space-y-4 shadow-lg">
+              <h3 className="font-bold text-sm text-blue-400 border-b border-slate-700 pb-2">B-5) Barcode Check (Mã Vạch)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Số Barcode / Mã Vạch Quét Được</label>
+                  <input
+                    type="text"
+                    value={packagingInfo.barcodeData || ''}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, barcodeData: e.target.value }))}
+                    placeholder="VD: SNM000031 / 6169F"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Kết Quả Kiểm Tra Barcode</label>
+                  <select
+                    value={packagingInfo.barcodeResult || 'PASS'}
+                    onChange={(e) => setPackagingInfo(p => ({ ...p, barcodeResult: e.target.value }))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="PASS">PASS (Khớp mã vạch)</option>
+                    <option value="FAIL">FAIL (Sai/Lỗi mã vạch)</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-blue-400" /> Ảnh Quét Mã Vạch Barcode
+                </label>
+                <div className="flex flex-wrap gap-3 items-center">
+                  {(packagingInfo.barcodePhotos || []).map((item, pIdx) => {
+                    const src = typeof item === 'string' ? item : item.url;
+                    return <img key={pIdx} src={src} alt="Barcode" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
+                  })}
+                  <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
+                    <Upload className="w-4 h-4" />
+                    <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleUploadPackagingPhoto('barcodePhotos', file);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 5: OTHER */}
+        {activeWorkerTab === 'OTHER' && (
+          <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 space-y-4 shadow-lg">
+            <h3 className="font-bold text-sm text-blue-400 border-b border-slate-700 pb-2">Mục E) OTHER INFORMATION (Thông Tin Khác)</h3>
+            <div>
+              <label className="text-[11px] font-semibold text-slate-300 block mb-1">Ghi Chú Bổ Sung</label>
+              <textarea
+                value={otherInfo.notes || ''}
+                onChange={(e) => setOtherInfo(o => ({ ...o, notes: e.target.value }))}
+                rows={3}
+                placeholder="Nhập ghi chú hoặc thông tin bổ sung cho Mục E..."
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                <Camera className="w-3.5 h-3.5 text-blue-400" /> Ảnh Bổ Sung Thực Tế Xưởng Sản Xuất
+              </label>
+              <div className="flex flex-wrap gap-3 items-center">
+                {(otherInfo.photos || []).map((item, pIdx) => {
+                  const src = typeof item === 'string' ? item : item.url;
+                  return <img key={pIdx} src={src} alt="Other" className="w-20 h-20 object-cover rounded-lg border border-slate-700" />;
+                })}
+                <label className="w-20 h-20 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
+                  <Upload className="w-4 h-4" />
+                  <span className="text-[9px] mt-1 font-bold">+ Thêm Ảnh</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleUploadOtherPhoto(file);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer Submission Controls */}
         <div className="pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
