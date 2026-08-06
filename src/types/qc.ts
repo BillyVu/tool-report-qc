@@ -57,6 +57,49 @@ export interface InspectionStep {
   mapping: DocxMapping;
 }
 
+export interface DefectPhoto {
+  url: string;
+  label?: string;
+}
+
+export interface DefectItem {
+  id: string;
+  description: string;
+  defectType: 'Critical' | 'Major' | 'Minor';
+  count: number;
+  photos?: DefectPhoto[];
+}
+
+export interface MeasurementPhoto {
+  url: string;
+  label?: string;
+}
+
+export interface PackagingInfoData {
+  cartonSpec?: string;
+  cartonMeasuredSize?: string;
+  cartonResult?: string;
+  cartonNw?: string;
+  cartonGw?: string;
+  cartonPhotos?: MeasurementPhoto[];
+
+  deviceSpec?: string;
+  deviceMeasuredSize?: string;
+  deviceResult?: string;
+  deviceNw?: string;
+  deviceGw?: string;
+  devicePhotos?: MeasurementPhoto[];
+
+  barcodeData?: string;
+  barcodeResult?: string;
+  barcodePhotos?: MeasurementPhoto[];
+}
+
+export interface OtherInfoData {
+  notes?: string;
+  photos?: MeasurementPhoto[];
+}
+
 export interface ChecklistTemplate {
   id: string;
   title: string;
@@ -81,6 +124,9 @@ export interface ChecklistTemplate {
   hardwareVersion?: string;
   buildNumber?: string;
   steps: InspectionStep[];
+  defectsFindingData?: DefectItem[];
+  packagingInfoData?: PackagingInfoData;
+  otherInfoData?: OtherInfoData;
 }
 
 export interface StepResult {
@@ -143,6 +189,9 @@ export interface InspectionJob {
   adminNotes?: string;
   exportCount?: number;
   lastExportedAt?: string;
+  defectsFindingData?: DefectItem[];
+  packagingInfoData?: PackagingInfoData;
+  otherInfoData?: OtherInfoData;
   
   // Session URL & Expiration (24h limit)
   sessionToken?: string;

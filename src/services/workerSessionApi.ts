@@ -79,6 +79,9 @@ async function parseJson(response: Response) {
 
 async function expectOk(response: Response) {
   if (response.ok) return parseJson(response);
+  if (response.status === 413) {
+    throw new Error('Dung lượng ảnh/dữ liệu nộp lên quá lớn (413 Payload Too Large). Hệ thống đã tự động nén ảnh, vui lòng bấm nộp lại.');
+  }
   const payload = await parseJson(response).catch(() => undefined);
   throw new Error(payload?.error || `QC API request failed (${response.status})`);
 }
@@ -108,6 +111,9 @@ export function mapInspectionJob(row: ApiInspectionJob): InspectionJob {
     sessionCreatedAt: row.sessionCreatedAt || row.session_created_at || undefined,
     sessionExpiresAt: row.sessionExpiresAt || row.session_expires_at || undefined,
     sessionRevokedAt: row.sessionRevokedAt || row.session_revoked_at || undefined,
+    defectsFindingData: (row as any).defectsFindingData || (row as any).defects_finding_data || undefined,
+    packagingInfoData: (row as any).packagingInfoData || (row as any).packaging_info_data || undefined,
+    otherInfoData: (row as any).otherInfoData || (row as any).other_info_data || undefined,
   };
 }
 
@@ -171,11 +177,16 @@ export function createWorkerSessionApi(options: WorkerSessionApiOptions = {}) {
       token: string,
       stepResults: StepResult[],
       workerInfo: WorkerInfo,
+      additionalData?: {
+        defectsFindingData?: any;
+        packagingInfoData?: any;
+        otherInfoData?: any;
+      }
     ): Promise<{ success: boolean; message: string; job?: InspectionJob }> {
       const response = await fetchImpl(`/api/worker-sessions/${encodeURIComponent(jobId)}/draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, stepResults, workerInfo }),
+        body: JSON.stringify({ token, stepResults, workerInfo, ...additionalData }),
       });
       const payload = await expectOk(response);
       return {
@@ -190,11 +201,16 @@ export function createWorkerSessionApi(options: WorkerSessionApiOptions = {}) {
       token: string,
       stepResults: StepResult[],
       workerInfo: WorkerInfo,
+      additionalData?: {
+        defectsFindingData?: any;
+        packagingInfoData?: any;
+        otherInfoData?: any;
+      }
     ): Promise<{ success: boolean; message: string; job?: InspectionJob }> {
       const response = await fetchImpl(`/api/worker-sessions/${encodeURIComponent(jobId)}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, stepResults, workerInfo }),
+        body: JSON.stringify({ token, stepResults, workerInfo, ...additionalData }),
       });
       const payload = await expectOk(response);
       return {

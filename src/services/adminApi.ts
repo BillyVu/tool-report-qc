@@ -43,8 +43,8 @@ export function getAdminApiBaseUrl(options: AdminApiOptions = {}): string {
   if (envUrl !== undefined && envUrl.trim() !== '') {
     return envUrl.trim().replace(/\/+$/, '');
   }
-  // When running locally in browser dev mode, use relative path to allow Vite dev proxy without CORS issues
-  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+  // In any browser environment, default to relative path '' so requests share the page origin and use Vite proxy without CORS errors
+  if (typeof window !== 'undefined') {
     return '';
   }
   return 'https://qc.apexdev.website';

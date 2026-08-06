@@ -120,6 +120,9 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
           workerName: workerName.trim() || 'Công nhân QC',
           line,
           shift,
+          defectsFindingData: selectedTemplate.defectsFindingData || [],
+          packagingInfoData: selectedTemplate.packagingInfoData || {},
+          otherInfoData: selectedTemplate.otherInfoData || {},
         });
         const res = await adminApi.createWorkerSession(newJob.id);
         setSessionUrl(res.sessionUrl);
@@ -250,35 +253,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
               </div>
             </div>
 
-            {/* Production Line & Shift */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Chuyền Sản Xuất</label>
-                <select
-                  value={line}
-                  onChange={(e) => setLine(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                >
-                  <option value="Chuyền 01 - Lắp Ráp">Chuyền 01 - Lắp Ráp</option>
-                  <option value="Chuyền 02 - Đóng Gói">Chuyền 02 - Đóng Gói</option>
-                  <option value="Chuyền 03 - Sơn & Xi">Chuyền 03 - Sơn & Xi</option>
-                  <option value="Chuyền 04 - Kiểm Định Cuối">Chuyền 04 - Kiểm Định Cuối</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Ca Làm Việc</label>
-                <select
-                  value={shift}
-                  onChange={(e) => setShift(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                >
-                  <option value="Ca Sáng (06:00 - 14:00)">Ca Sáng (06:00 - 14:00)</option>
-                  <option value="Ca Chiều (14:00 - 22:00)">Ca Chiều (14:00 - 22:00)</option>
-                  <option value="Ca Đêm (22:00 - 06:00)">Ca Đêm (22:00 - 06:00)</option>
-                </select>
-              </div>
-            </div>
+            {/* Production Line & Shift (Temporarily hidden) */}
 
             {/* Assigned Worker */}
             <div>
