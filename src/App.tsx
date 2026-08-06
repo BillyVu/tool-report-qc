@@ -7,6 +7,7 @@ import { AuditLogsView } from './views/AuditLogsView';
 import { SettingsView } from './views/SettingsView';
 import { WorkerSessionPortalView } from './views/WorkerSessionPortalView';
 import { LoginView } from './views/LoginView';
+import { GuideView } from './views/GuideView';
 import { InspectionJob } from './types/qc';
 import { clearStoredAdminApiKey, hasStoredAdminSession } from './services/adminAuth';
 import { adminApi, setAdminApiKey } from './services/adminApi';
@@ -78,6 +79,10 @@ export default function App() {
         onExitSession={handleExitWorkerSession}
       />
     );
+  }
+
+  if (['/guide', '/guide/', '/huong-dan', '/huong-dan/'].includes(window.location.pathname)) {
+    return <GuideView />;
   }
 
   if (adminAuthState === 'checking') {

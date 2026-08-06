@@ -9,6 +9,8 @@ interface UploadedPhotoPatch {
   slotIndex: number;
   photoUrl: string;
   slotLabel?: string;
+  manualOverride?: boolean;
+  aiQualityStatus?: 'APPROVED' | 'UNAVAILABLE';
 }
 
 interface EvidencePhotoPatch {
@@ -18,6 +20,18 @@ interface EvidencePhotoPatch {
   slot_index?: number;
   photoUrl?: string;
   photo_url?: string;
+  manualOverride?: boolean;
+  manual_override?: boolean;
+  aiQualityStatus?: 'APPROVED' | 'UNAVAILABLE';
+  ai_quality_status?: 'APPROVED' | 'UNAVAILABLE';
+}
+
+interface AnalysisSummaryPatch {
+  stepId: string;
+  slotIndex: number;
+  aiDetectedText: string;
+  aiDetectedValue: string;
+  aiDetectStatus: 'SUCCESS' | 'WARNING' | 'FAILED';
 }
 
 function evidencePhotoFields(photo: unknown) {
@@ -27,7 +41,13 @@ function evidencePhotoFields(photo: unknown) {
   const slotIndex = Number(currentPhoto.slotIndex ?? currentPhoto.slot_index);
   const photoUrl = currentPhoto.photoUrl || currentPhoto.photo_url;
   if (!stepId || !Number.isInteger(slotIndex) || !photoUrl) return null;
-  return { stepId, slotIndex, photoUrl };
+  return {
+    stepId,
+    slotIndex,
+    photoUrl,
+    manualOverride: currentPhoto.manualOverride ?? currentPhoto.manual_override,
+    aiQualityStatus: currentPhoto.aiQualityStatus || currentPhoto.ai_quality_status,
+  };
 }
 
 export const updateJobStatusSql = `
@@ -39,6 +59,14 @@ UPDATE inspection_jobs
        version = version + 1
  WHERE external_id = $1
  RETURNING *`;
+
+export function calculateExtendedSessionExpiry(currentExpiresAt: Date | string, extensionHours: number, now = new Date()) {
+  const currentExpiry = currentExpiresAt instanceof Date ? currentExpiresAt : new Date(currentExpiresAt);
+  const baseTime = Number.isFinite(currentExpiry.getTime()) && currentExpiry.getTime() > now.getTime()
+    ? currentExpiry.getTime()
+    : now.getTime();
+  return new Date(baseTime + extensionHours * 60 * 60 * 1000);
+}
 
 export function buildInitialStepResults(templateSnapshot: TemplateLike, timestamp = new Date().toISOString()) {
   const steps = Array.isArray(templateSnapshot?.steps) ? templateSnapshot.steps : [];
@@ -97,6 +125,8 @@ export function attachUploadedPhotoToStepResults(stepResults: unknown, patch: Up
       return {
         ...slot,
         photoUrl: patch.photoUrl,
+        ...(patch.manualOverride ? { manualOverride: true } : {}),
+        ...(patch.aiQualityStatus ? { aiQualityStatus: patch.aiQualityStatus } : {}),
       };
     });
 
@@ -105,6 +135,8 @@ export function attachUploadedPhotoToStepResults(stepResults: unknown, patch: Up
         slotIndex: patch.slotIndex,
         label: patch.slotLabel || `Slot ${patch.slotIndex}`,
         photoUrl: patch.photoUrl,
+        ...(patch.manualOverride ? { manualOverride: true } : {}),
+        ...(patch.aiQualityStatus ? { aiQualityStatus: patch.aiQualityStatus } : {}),
       });
     }
 
@@ -166,4 +198,32 @@ export function attachEvidencePhotosToStepResults(stepResults: unknown, evidence
       ? { ...current, photos: [...existingPhotos, ...evidenceForStep] }
       : current;
   });
+}
+
+export function attachAnalysisSummaryToStepResults(stepResults: unknown, patch: AnalysisSummaryPatch) {
+  const steps = Array.isArray(stepResults) ? stepResults : [];
+  let found = false;
+
+  const updatedSteps = steps.map((step) => {
+    if (!step || typeof step !== 'object' || (step as { stepId?: unknown }).stepId !== patch.stepId) return step;
+    found = true;
+    const current = step as Record<string, unknown>;
+    const photoSlotsData = Array.isArray(current.photoSlotsData)
+      ? current.photoSlotsData.map((slot) => {
+          if (!slot || typeof slot !== 'object' || Number((slot as { slotIndex?: unknown }).slotIndex) !== patch.slotIndex) return slot;
+          return {
+            ...slot,
+            aiDetectedText: patch.aiDetectedText,
+          };
+        })
+      : current.photoSlotsData;
+    return {
+      ...current,
+      photoSlotsData,
+      aiDetectedValue: patch.aiDetectedValue,
+      aiDetectStatus: patch.aiDetectStatus,
+    };
+  });
+
+  return { found, updatedSteps };
 }

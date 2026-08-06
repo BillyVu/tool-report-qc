@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { Plus, Check, X, FileText, Upload, Sparkles, AlertCircle, Eye } from 'lucide-react';
+import React, { useCallback, useRef, useState } from 'react';
+import { Plus, Check, X, FileText, Upload, Sparkles, AlertCircle, Eye, CircleHelp } from 'lucide-react';
 import { ChecklistTemplate, InspectionStep, DocxMapping } from '../../types/qc';
 import { StepDraggableList } from './StepDraggableList';
 import { DocxMappingModal } from './DocxMappingModal';
 import { TemplatePreviewModal } from './TemplatePreviewModal';
 import { validateTemplateMappings } from '../../utils/docxMapping';
+import { TemplateQuickTour } from '../onboarding/TemplateQuickTour';
 
 interface TemplateFormModalProps {
   isOpen: boolean;
@@ -71,6 +72,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
   // Live Preview Modal State
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const startBuilderTourRef = useRef<(() => void) | null>(null);
+
+  const handleBuilderTourReady = useCallback((startTour: () => void) => {
+    startBuilderTourRef.current = startTour;
+  }, []);
 
   const currentPreviewData: ChecklistTemplate = {
     id: template?.id || 'PREVIEW_TEMP',
@@ -557,7 +563,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   return (
     <>
       <div
-        className="qc-builder-shell fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-start justify-center p-2 overflow-y-auto animate-fade-in cursor-pointer sm:p-4 sm:items-center"
+        className="qc-builder-shell flex min-h-full flex-col bg-[#090d16] animate-fade-in"
         onClick={(e) => {
           if (e.target === e.currentTarget) {
             onClose();
@@ -565,12 +571,12 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
         }}
       >
         <div
-          className="qc-builder-modal w-full max-w-6xl max-h-[96dvh] flex flex-col overflow-hidden my-auto cursor-default"
+          className="qc-builder-modal w-full flex-1 flex flex-col overflow-hidden cursor-default rounded-none border-x-0"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           <div className="qc-builder-header text-white p-4 flex items-start justify-between gap-3 shrink-0 sm:p-5">
-            <div className="min-w-0">
+            <div data-tour="template-form-title" className="min-w-0">
               <h2 className="text-base font-bold sm:text-lg">
                 {isEdit ? 'Chỉnh sửa mẫu checklist QC' : 'Tạo Mẫu Checklist & Cấu Hình Word DOCX Mới'}
               </h2>
@@ -578,16 +584,52 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                 Thiết lập quy trình kiểm tra các bước và cấu hình thẻ ánh xạ vào file Word mẫu
               </p>
             </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => startBuilderTourRef.current?.()}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1.5 text-[11px] font-bold text-sky-300 transition-colors hover:bg-slate-800 hover:text-white"
+              >
+                <CircleHelp className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Hướng dẫn</span>
+              </button>
+              <button
+                onClick={onClose}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           {/* Form Content */}
-          <form onSubmit={handleFormSubmit} className="flex-1 overflow-y-auto p-4 space-y-6 bg-[#090d16] sm:p-6">
+          <form onSubmit={handleFormSubmit} className="relative flex-1 overflow-y-auto p-4 space-y-6 bg-[#090d16] sm:p-6 lg:pr-[420px]">
+            <aside className="hidden lg:block absolute right-6 top-6 w-[360px] rounded-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl">
+              <div className="mb-3 flex items-center justify-between border-b border-slate-800 pb-3">
+                <div><p className="text-[10px] font-bold tracking-wider text-sky-400">WORKER LIVE PREVIEW</p><p className="text-sm font-bold text-white">{title || 'Mẫu QC chưa đặt tên'}</p></div>
+                <span className="rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-300">Desktop</span>
+              </div>
+              <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 text-[10px]">
+                <div><p className="text-slate-500">Sản phẩm</p><p className="truncate font-semibold text-white">{productName || 'Chưa nhập'}</p></div>
+                <div><p className="text-slate-500">Mã sản phẩm</p><p className="truncate font-mono font-semibold text-sky-300">{productCode || '—'}</p></div>
+              </div>
+              <div className="max-h-[62vh] space-y-2 overflow-y-auto pr-1">
+                {steps.map((step, index) => {
+                  const slots = step.photoSlotConfigs?.length
+                    ? step.photoSlotConfigs.map((slot) => slot.label)
+                    : step.photoSlots || Array.from({ length: step.requiredPhotoCount || 1 }, (_, slotIndex) => `Slot ${slotIndex + 1}`);
+                  const hasTextField = step.inputType === 'TEXT' || step.inputType === 'PHOTO_AND_TEXT';
+                  return (
+                    <div key={step.stepId} className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+                      <div className="mb-2 flex items-center gap-2"><span className="rounded bg-sky-400 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-950">{step.stepId}</span><span className="truncate text-xs font-semibold text-white">{step.title || `Bước ${index + 1}`}</span></div>
+                      <p className="line-clamp-2 text-[11px] text-slate-400">{step.passCriteria || 'Chưa có tiêu chuẩn đạt'}</p>
+                      {slots.length > 0 && <div className="mt-2"><p className="mb-1 text-[10px] font-semibold text-sky-300">Ảnh công nhân cần chụp · {slots.length}/{slots.length}</p><div className="flex flex-wrap gap-1">{slots.map((slot, slotIndex) => <span key={`${slot}-${slotIndex}`} className="max-w-full truncate rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-[10px] text-slate-300" title={slot}>Slot {slotIndex + 1}: {slot}</span>)}</div></div>}
+                      {hasTextField && <div className="mt-2 rounded border border-sky-900/70 bg-sky-950/30 p-2"><p className="text-[10px] font-semibold text-sky-300">Giá trị công nhân nhập{step.isRequiredText ? ' · bắt buộc' : ''}</p><p className="mt-1 truncate rounded bg-slate-950 px-2 py-1.5 font-mono text-[10px] text-slate-400">{step.textInputPlaceholder || step.textInputLabel || 'Nhập kết quả kiểm tra...'}</p></div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </aside>
             {saveError && (
               <div className="bg-red-950/40 border border-red-500/30 text-red-200 text-xs font-semibold rounded-lg p-3">
                 {saveError}
@@ -595,7 +637,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
             )}
 
             {/* Template Basic Info */}
-            <div className="qc-builder-card space-y-4 p-5">
+            <div data-tour="template-form-basics" className="qc-builder-card space-y-4 p-5">
               <div className="qc-builder-card-header flex flex-col gap-2 pb-3 sm:flex-row sm:items-center sm:justify-between">
                 <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                   <FileText className="w-4 h-4 text-sky-400" />
@@ -823,7 +865,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     Kéo thả biểu tượng hai hàng chấm để thay đổi thứ tự các bước
                   </p>
                 </div>
-                <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                <div data-tour="template-form-presets" className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
                   <button
                     type="button"
                     onClick={handleLoadX530ReportTemplate}
@@ -856,11 +898,13 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
               </div>
 
               {/* Draggable Steps Container */}
-              <StepDraggableList
-                steps={steps}
-                setSteps={setSteps}
-                onConfigureMapping={(step, idx) => setActiveMappingStepIndex(idx)}
-              />
+              <div data-tour="template-form-steps">
+                <StepDraggableList
+                  steps={steps}
+                  setSteps={setSteps}
+                  onConfigureMapping={(step, idx) => setActiveMappingStepIndex(idx)}
+                />
+              </div>
             </div>
           </form>
 
@@ -869,6 +913,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
             <button
               type="button"
               onClick={() => setIsPreviewOpen(true)}
+              data-tour="template-form-preview"
               className="qc-builder-btn-secondary px-4 py-2 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
               title="Xem trước giao diện công nhân làm việc với mẫu hiện tại"
             >
@@ -888,6 +933,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                 type="button"
                 onClick={handleFormSubmit}
                 disabled={isSaving}
+                data-tour="template-form-save"
                 className="qc-builder-btn-primary px-6 py-2 rounded-lg disabled:bg-slate-600 text-xs font-bold shadow-md shadow-sky-500/20 transition-all flex items-center justify-center gap-2"
               >
                 <Check className="w-4 h-4" />
@@ -914,6 +960,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
         onClose={() => setIsPreviewOpen(false)}
         template={currentPreviewData}
       />
+      <TemplateQuickTour kind="builder" onReady={handleBuilderTourReady} />
     </>
   );
 };

@@ -6,6 +6,8 @@ export type StepStatus = 'PASS' | 'FAIL' | 'PENDING';
 export type StepModerationStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
 export type StepInputType = 'PHOTO' | 'TEXT' | 'PHOTO_AND_TEXT';
 export type AiDetectType = 'IMEI_SERIAL' | 'OCR_TEXT' | 'COLOR_SCREEN' | 'GENERAL';
+export type CaptureFrame = 'RECTANGLE' | 'SQUARE';
+export type PhotoVerificationMode = 'OCR_ID' | 'OCR_TEXT' | 'SCREEN_STATE' | 'VISUAL' | 'MEASUREMENT' | 'EVIDENCE_ONLY';
 
 export interface DocxMapping {
   imageTag: string;
@@ -19,6 +21,7 @@ export interface PhotoSlotConfig {
   slotIndex: number;
   label: string;
   photoType: PhotoType;
+  captureFrame?: CaptureFrame;
 }
 
 export interface TextFieldConfig {
@@ -32,8 +35,12 @@ export interface PhotoSlotData {
   slotIndex: number;
   label: string;
   photoType?: PhotoType;
+  captureFrame?: CaptureFrame;
   photoUrl?: string;
   aiDetectedText?: string;
+  aiResultJson?: Record<string, unknown>;
+  manualOverride?: boolean;
+  aiQualityStatus?: 'APPROVED' | 'UNAVAILABLE';
 }
 
 export interface InspectionStep {
@@ -48,7 +55,7 @@ export interface InspectionStep {
   textInputPlaceholder?: string;
   textFieldConfigs?: TextFieldConfig[];
   isRequiredText?: boolean;
-  enableAiDetection?: boolean; // AI detect data from photos
+  enableAiDetection?: boolean; // Vero extracts data from photos
   aiDetectType?: AiDetectType;
   aiDetectPrompt?: string;
   referenceImageUrl: string;
@@ -92,6 +99,7 @@ export interface StepResult {
   photos?: { url: string; slotName: string }[];
   textValue?: string;
   aiDetectedValue?: string;
+  aiResultJson?: Record<string, unknown>;
   aiDetectStatus?: 'SUCCESS' | 'WARNING' | 'FAILED';
   aiMatchStatus?: string;
   timestamp?: string;

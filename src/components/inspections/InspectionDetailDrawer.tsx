@@ -367,6 +367,9 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                             <span className={`rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${getStepStatusTone(activeStep.status)}`}>
                               Worker: {activeStep.status}
                             </span>
+                            {activeStep.photoSlotsData?.some((slot) => slot.manualOverride) && (
+                              <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-extrabold text-amber-800">Ảnh xác nhận thủ công</span>
+                            )}
                             <span className={`rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${getModerationTone(activeModerationStatus)}`}>
                               {activeModerationStatus === 'APPROVED' ? 'Admin đã duyệt' : activeModerationStatus === 'REJECTED' ? 'Admin từ chối' : 'Chờ admin duyệt'}
                             </span>
@@ -436,7 +439,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                                 </div>
                               </div>
                               <div className="border-t border-white/10 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200 truncate">
-                                {photo.slotName}
+                                Slot {index + 1} · {photo.slotName}
                               </div>
                             </button>
                           ))}
@@ -498,7 +501,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <span className="flex items-center gap-2 text-[11px] font-bold text-violet-900">
                               <Sparkles className="w-3.5 h-3.5 text-violet-600" />
-                              AI Gemini Detection
+                              Vero kiểm tra ảnh
                             </span>
                             {activeStep.aiMatchStatus && (
                               <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${activeStep.aiMatchStatus === 'MATCH' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
@@ -631,7 +634,8 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                 <button
                   type="button"
                   onClick={() => handleModerateStep(activeStep.stepId, 'REJECTED')}
-                  disabled={reviewingStepId === activeStep.stepId}
+                  disabled={reviewingStepId === activeStep.stepId || activePhotoCount < activeRequiredPhotoCount}
+                  title={activePhotoCount < activeRequiredPhotoCount ? `Cần đủ ${activeRequiredPhotoCount} ảnh bằng chứng trước khi duyệt.` : 'Duyệt bước này'}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-red-500 disabled:opacity-60"
                 >
                   {reviewingStepId === activeStep.stepId ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
@@ -644,7 +648,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 text-xs font-bold text-white shadow-sm hover:bg-blue-500 disabled:opacity-60"
                 >
                   {reviewingStepId === activeStep.stepId ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                  Duyệt bước này
+                  {activePhotoCount < activeRequiredPhotoCount ? `Cần đủ ảnh (${activePhotoCount}/${activeRequiredPhotoCount})` : 'Duyệt bước này'}
                 </button>
               </div>
             </div>

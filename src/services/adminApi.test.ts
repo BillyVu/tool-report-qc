@@ -330,3 +330,54 @@ test('moderates an inspection step through the admin API', async () => {
   });
   assert.equal(job.stepResults[0].moderationStatus, 'APPROVED');
 });
+
+test('manages photo type options through the admin API', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const photoType = {
+    type: 'SCREEN_WIFI',
+    label: 'Màn hình Wi-Fi',
+    category: 'OTHER',
+    iconEmoji: '📶',
+    aiPromptInstruction: 'Kiểm tra trạng thái Wi-Fi.',
+    isSystem: false,
+    isActive: true,
+    sortOrder: 220,
+  };
+  const api = createAdminApi({
+    adminKey: 'secret',
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify(init?.method === 'POST' || init?.method === 'PATCH' ? photoType : [photoType]), {
+        status: init?.method === 'POST' ? 201 : 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  });
+
+  const list = await api.listPhotoTypes();
+  const created = await api.createPhotoType({
+    type: 'SCREEN_WIFI',
+    label: 'Màn hình Wi-Fi',
+    category: 'OTHER',
+    iconEmoji: '📶',
+    aiPromptInstruction: 'Kiểm tra trạng thái Wi-Fi.',
+    isActive: true,
+    sortOrder: 220,
+  });
+  const updated = await api.updatePhotoType('SCREEN_WIFI', { isActive: false, sortOrder: 230 });
+  await api.deletePhotoType('SCREEN_WIFI');
+
+  assert.equal(calls[0].url, '/api/admin/photo-types');
+  assert.equal(calls[0].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
+  assert.equal(calls[1].url, '/api/admin/photo-types');
+  assert.equal(calls[1].init?.method, 'POST');
+  assert.equal(calls[2].url, '/api/admin/photo-types/SCREEN_WIFI');
+  assert.equal(calls[2].init?.method, 'PATCH');
+  assert.deepEqual(JSON.parse(String(calls[2].init?.body)), { isActive: false, sortOrder: 230 });
+  assert.equal(calls[3].url, '/api/admin/photo-types/SCREEN_WIFI');
+  assert.equal(calls[3].init?.method, 'DELETE');
+  assert.equal(calls[3].init?.headers?.['x-qc-admin-key' as keyof HeadersInit], 'secret');
+  assert.equal(list[0].type, 'SCREEN_WIFI');
+  assert.equal(created.label, 'Màn hình Wi-Fi');
+  assert.equal(updated.sortOrder, 220);
+});

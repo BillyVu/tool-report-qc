@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   LayoutDashboard, 
   FileCheck2, 
@@ -6,11 +6,15 @@ import {
   History, 
   Settings, 
   Plus,
-  LogOut
+  LogOut,
+  BookOpen,
+  Map
 } from 'lucide-react';
 import { DashboardKPI } from '../types/qc';
 import { adminApi } from '../services/adminApi';
 import { CreateInspectionJobModal } from '../components/inspections/CreateInspectionJobModal';
+import { VeroBrand } from '../components/branding/VeroBrand';
+import { QuickTour } from '../components/onboarding/QuickTour';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -28,6 +32,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
   const [kpis, setKpis] = useState<DashboardKPI>({ totalJobs: 0, inProgress: 0, completed: 0, failed: 0, passRate: 100, todayCount: 0 });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const startQuickTourRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     void adminApi.getKpis().then(setKpis).catch(() => undefined);
@@ -72,16 +77,22 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     settings: 'Cấu hình Hệ thống & Xuất Báo cáo'
   };
 
+  const handleStartQuickTour = () => {
+    setActiveTab('dashboard');
+    window.requestAnimationFrame(() => startQuickTourRef.current?.());
+  };
+
+  const handleQuickTourReady = useCallback((startTour: () => void) => {
+    startQuickTourRef.current = startTour;
+  }, []);
+
   return (
     <div className="flex min-h-dvh w-full bg-slate-50 font-sans text-slate-800 lg:h-screen lg:overflow-hidden">
       {/* SLEEK SIDEBAR */}
       <aside className="hidden w-64 bg-slate-900 flex-col flex-shrink-0 border-r border-slate-800 lg:flex">
         {/* Brand Header */}
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-md shadow-blue-600/30">
-            QC
-          </div>
-          <span className="text-white font-semibold text-lg tracking-tight">Core System</span>
+        <div className="p-6">
+          <VeroBrand tone="dark" />
         </div>
 
         {/* Navigation */}
@@ -93,6 +104,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id as any)}
+                data-tour={item.id === 'dashboard' ? 'dashboard-nav' : item.id === 'inspections' ? 'inspections-nav' : item.id === 'templates' ? 'templates-nav' : undefined}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-blue-600 text-white shadow-sm'
@@ -115,6 +127,24 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
 
         {/* User Profile Footer */}
         <div className="p-4 border-t border-slate-800 space-y-3">
+          <button
+            type="button"
+            onClick={handleStartQuickTour}
+            className="w-full flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm shadow-blue-900/40 transition-colors hover:bg-blue-500"
+          >
+            <Map className="w-4 h-4" />
+            <span>Xem hướng dẫn nhanh</span>
+          </button>
+          <a
+            href="/guide"
+            target="_blank"
+            rel="noreferrer"
+            data-tour="guide-link"
+            className="w-full flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>Hướng dẫn</span>
+          </a>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white font-bold border border-slate-600">
               QA
@@ -140,9 +170,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         {/* TOP HEADER */}
         <header className="bg-white border-b border-slate-200 flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between lg:h-16 lg:px-8 lg:py-0 flex-shrink-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white shadow-md shadow-blue-600/30 lg:hidden">
-              QC
-            </div>
+            <VeroBrand compact className="lg:hidden" />
             <h1 className="min-w-0 flex-1 text-base font-bold text-slate-800 tracking-tight sm:text-lg">
               {pageTitles[activeTab] || 'Bảng Điều Khiển QC'}
             </h1>
@@ -155,6 +183,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsCreateModalOpen(true)}
+              data-tour="create-inspection"
               className="flex w-full items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs sm:w-auto lg:text-sm font-semibold transition-all shadow-sm active:scale-95"
             >
               <Plus className="w-4 h-4" />
@@ -213,6 +242,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
           setTimeout(() => setToastMessage(null), 4000);
         }}
       />
+      <QuickTour onStartTour={handleQuickTourReady} />
     </div>
   );
 };

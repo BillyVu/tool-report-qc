@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { KeyRound, LockKeyhole, ShieldCheck } from 'lucide-react';
+import { BookOpen, KeyRound, LockKeyhole } from 'lucide-react';
 import { createAdminApi, setAdminApiKey } from '../services/adminApi';
+import { VeroBrand } from '../components/branding/VeroBrand';
 
 interface LoginViewProps {
   onAuthenticated: () => void;
@@ -36,13 +37,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onAuthenticated }) => {
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-slate-900">
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-4 w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-600/30">
-            <ShieldCheck className="w-8 h-8" />
-          </div>
-          <h1 className="text-2xl font-bold text-white">QC Core System</h1>
+          <VeroBrand tone="dark" className="mx-auto mb-4 w-fit text-2xl" />
+          <h1 className="text-2xl font-bold text-white">Đăng nhập quản trị</h1>
           <p className="mt-2 text-sm text-slate-400">
             Đăng nhập admin để quản lý checklist, lệnh kiểm tra và báo cáo.
           </p>
+          <a
+            href="/guide"
+            className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-bold text-slate-200 transition-colors hover:border-blue-500 hover:bg-slate-900 hover:text-white"
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>Xem hướng dẫn sử dụng</span>
+          </a>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 space-y-5">

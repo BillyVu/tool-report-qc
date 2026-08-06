@@ -22,6 +22,6 @@ export async function detectDataFromPhoto(
     detectedText: '',
     confidence: 0,
     status: 'WARNING',
-    summary: `Tác vụ Gemini [${photoInfo.label}] phải chạy qua server worker; UI không gọi Gemini trực tiếp.`
+    summary: `Tác vụ Vero [${photoInfo.label}] phải chạy qua server worker; UI không gọi Vero trực tiếp.`
   };
 }

@@ -1,4 +1,5 @@
 import { AuditLogEntry, ChecklistTemplate, DashboardKPI, InspectionJob, StepModerationStatus } from '../types/qc';
+import { PhotoTypeOption } from '../constants/photoTypes';
 import { loadStoredAdminApiKey, saveStoredAdminApiKey } from './adminAuth';
 import { mapInspectionJob } from './workerSessionApi';
 
@@ -21,6 +22,32 @@ interface AdminApiOptions {
   origin?: string;
   pathname?: string;
   baseUrl?: string;
+}
+
+export interface SavePhotoTypePayload {
+  type?: string;
+  label?: string;
+  category?: PhotoTypeOption['category'];
+  iconEmoji?: string;
+  verificationMode?: PhotoTypeOption['verificationMode'];
+  schemaVersion?: string;
+  outputSchema?: Record<string, unknown>;
+  aiPromptInstruction?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export interface VeroPromptProfile {
+  profileKey: 'PHOTO_QUALITY_GATE' | 'PHOTO_ANALYSIS';
+  label: string;
+  description: string;
+  instruction: string;
+  revision: number;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
+  verifiedRevision?: number | null;
+  verifiedPromptHash?: string | null;
+  updatedAt?: string;
 }
 
 let inMemoryAdminKey = '';
@@ -150,6 +177,63 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       return await expectOk(await fetchImpl(apiUrl('/api/admin/audit-events'), {
         headers: headers(),
       })) || [];
+    },
+
+    async listPhotoTypes(): Promise<PhotoTypeOption[]> {
+      return await expectOk(await fetchImpl('/api/admin/photo-types', {
+        headers: headers(),
+      })) || [];
+    },
+
+    async listVeroPromptProfiles(): Promise<VeroPromptProfile[]> {
+      return await expectOk(await fetchImpl('/api/admin/vero-prompt-profiles', {
+        headers: headers(),
+      })) || [];
+    },
+
+    async updateVeroPromptProfile(profileKey: VeroPromptProfile['profileKey'], instruction: string): Promise<VeroPromptProfile> {
+      return await expectOk(await fetchImpl(`/api/admin/vero-prompt-profiles/${encodeURIComponent(profileKey)}`, {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ instruction }),
+      }));
+    },
+
+    async verifyVeroPromptProfile(profileKey: VeroPromptProfile['profileKey']): Promise<VeroPromptProfile> {
+      return await expectOk(await fetchImpl(`/api/admin/vero-prompt-profiles/${encodeURIComponent(profileKey)}/verify`, {
+        method: 'POST',
+        headers: headers(),
+      }));
+    },
+
+    async createPhotoType(payload: SavePhotoTypePayload): Promise<PhotoTypeOption> {
+      return await expectOk(await fetchImpl('/api/admin/photo-types', {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(payload),
+      }));
+    },
+
+    async updatePhotoType(type: string, payload: SavePhotoTypePayload): Promise<PhotoTypeOption> {
+      return await expectOk(await fetchImpl(`/api/admin/photo-types/${encodeURIComponent(type)}`, {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify(payload),
+      }));
+    },
+
+    async verifyPhotoType(type: string): Promise<PhotoTypeOption> {
+      return await expectOk(await fetchImpl(`/api/admin/photo-types/${encodeURIComponent(type)}/verify`, {
+        method: 'POST',
+        headers: headers(),
+      }));
+    },
+
+    async deletePhotoType(type: string): Promise<void> {
+      await expectOk(await fetchImpl(`/api/admin/photo-types/${encodeURIComponent(type)}`, {
+        method: 'DELETE',
+        headers: headers(),
+      }));
     },
 
     async createJob(payload: CreateJobPayload): Promise<InspectionJob> {

@@ -179,8 +179,17 @@ function buildStepDetailParagraphs(stepResult: StepResult): Paragraph[] {
   if (stepResult.aiDetectedValue) {
     details.push(new Paragraph({
       children: [
-        new TextRun({ text: 'AI Gemini: ', bold: true, size: 18, color: "6D28D9" }),
+        new TextRun({ text: 'Vero: ', bold: true, size: 18, color: "6D28D9" }),
         new TextRun({ text: stepResult.aiDetectedValue, size: 18, color: "1E293B" }),
+      ]
+    }));
+  }
+
+  if (stepResult.aiResultJson && typeof stepResult.aiResultJson === 'object') {
+    details.push(new Paragraph({
+      children: [
+        new TextRun({ text: 'Vero JSON: ', bold: true, size: 18, color: "6D28D9" }),
+        new TextRun({ text: JSON.stringify(stepResult.aiResultJson), size: 16, color: "475569" }),
       ]
     }));
   }
@@ -353,6 +362,8 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
       });
     }
   }
+
+  const veroLogo = await fetchImageBuffer('/vero-qc-icon.png');
 
   // Common borders for tables
   const cellBorder = {
@@ -705,6 +716,22 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
           },
         },
         children: [
+          ...(veroLogo?.type === 'png' ? [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: veroLogo.data,
+                  type: 'png',
+                  transformation: { width: 52, height: 52 },
+                }),
+              ],
+            }),
+          ] : []),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: 'VERO QC', bold: true, size: 24, color: '075B63' })],
+          }),
           // Header Company Title
           new Paragraph({
             alignment: AlignmentType.CENTER,
@@ -886,7 +913,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
                       new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "(Đã xác nhận trên hệ thống)", italics: true, size: 16, color: "64748B" })] }),
                       new Paragraph({ text: "" }),
                       new Paragraph({ text: "" }),
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "QC Admin (System Verified)", bold: true, size: 20, color: "15803D" })] }),
+                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Vero QC Admin (Đã xác nhận)", bold: true, size: 20, color: "15803D" })] }),
                     ]
                   }),
                 ]
@@ -899,7 +926,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
             alignment: AlignmentType.CENTER,
             children: [
               new TextRun({
-                text: `Báo cáo được xuất tự động từ Hệ thống QC Admin Core Engine | Thời điểm: ${new Date().toLocaleString('vi-VN')}`,
+                text: `Báo cáo được xuất tự động từ Vero QC | Thời điểm: ${new Date().toLocaleString('vi-VN')}`,
                 size: 16,
                 color: "94A3B8"
               })
