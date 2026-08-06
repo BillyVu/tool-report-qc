@@ -1,4 +1,4 @@
-import { AuditLogEntry, ChecklistTemplate, DashboardKPI, InspectionJob, StepModerationStatus } from '../types/qc';
+import { AuditLogEntry, ChecklistTemplate, DashboardKPI, DefectItem, InspectionJob, OtherInfoData, PackagingInfoData, StepModerationStatus } from '../types/qc';
 import { PhotoTypeOption } from '../constants/photoTypes';
 import { loadStoredAdminApiKey, saveStoredAdminApiKey } from './adminAuth';
 import { mapInspectionJob } from './workerSessionApi';
@@ -14,9 +14,9 @@ interface CreateJobPayload {
   workerName?: string;
   shift?: string;
   line?: string;
-  defectsFindingData?: unknown;
-  packagingInfoData?: unknown;
-  otherInfoData?: unknown;
+  defectsFindingData?: DefectItem[];
+  packagingInfoData?: PackagingInfoData;
+  otherInfoData?: OtherInfoData;
 }
 
 interface AdminApiOptions {

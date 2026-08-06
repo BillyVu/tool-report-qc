@@ -64,10 +64,7 @@ export interface InspectionStep {
   mapping: DocxMapping;
 }
 
-export interface DefectPhoto {
-  url: string;
-  label?: string;
-}
+export type DefectPhoto = string | { url: string; label?: string };
 
 export interface DefectItem {
   id: string;
@@ -77,10 +74,7 @@ export interface DefectItem {
   photos?: DefectPhoto[];
 }
 
-export interface MeasurementPhoto {
-  url: string;
-  label?: string;
-}
+export type MeasurementPhoto = string | { url: string; label?: string };
 
 export interface PackagingInfoData {
   cartonSpec?: string;
