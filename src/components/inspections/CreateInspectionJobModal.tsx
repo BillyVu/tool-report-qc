@@ -46,6 +46,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
   // Created Job success step
   const [createdJob, setCreatedJob] = useState<InspectionJob | null>(null);
   const [sessionUrl, setSessionUrl] = useState<string>('');
+  const [sessionCreationError, setSessionCreationError] = useState('');
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -75,6 +76,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
       setNotes('');
       setCreatedJob(null);
       setSessionUrl('');
+      setSessionCreationError('');
       setCopied(false);
     }
   }, [isOpen]);
@@ -124,10 +126,21 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
           packagingInfoData: selectedTemplate.packagingInfoData || {},
           otherInfoData: selectedTemplate.otherInfoData || {},
         });
-        const res = await adminApi.createWorkerSession(newJob.id);
-        setSessionUrl(res.sessionUrl);
         setCreatedJob(newJob);
         if (onJobCreated) onJobCreated(newJob);
+        try {
+          const res = await adminApi.createWorkerSession(newJob.id);
+          setSessionUrl(res.sessionUrl);
+          setSessionCreationError('');
+        } catch (sessionError) {
+          console.error('Failed to create worker session after job creation:', sessionError);
+          setSessionUrl('');
+          setSessionCreationError(
+            sessionError instanceof Error
+              ? sessionError.message
+              : 'Lệnh kiểm tra đã được tạo nhưng chưa tạo được link phiên làm việc.',
+          );
+        }
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : 'Không tạo được lệnh kiểm tra trong database.');
       } finally {
@@ -313,39 +326,56 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
               </div>
             </div>
 
-            {/* Generated Session URL Box */}
-            <div className="bg-slate-900 text-white p-4 rounded-xl space-y-2 border border-slate-800">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-amber-400 flex items-center gap-1.5">
-                  <LinkIcon className="w-4 h-4" />
-                  Link Phiên Làm Việc (Thời hạn 24 giờ):
-                </span>
-                <span className="text-[11px] text-slate-400 font-mono">24h Session URL</span>
-              </div>
+            {sessionUrl ? (
+              <div className="bg-slate-900 text-white p-4 rounded-xl space-y-2 border border-slate-800">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-amber-400 flex items-center gap-1.5">
+                    <LinkIcon className="w-4 h-4" />
+                    Link Phiên Làm Việc (Thời hạn 24 giờ):
+                  </span>
+                  <span className="text-[11px] text-slate-400 font-mono">24h Session URL</span>
+                </div>
 
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <input
-                  type="text"
-                  readOnly
-                  value={sessionUrl}
-                  className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none select-all"
-                />
-                <button
-                  onClick={handleCopyLink}
-                  className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                    copied
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-blue-600 hover:bg-blue-500 text-white'
-                  }`}
-                >
-                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span>{copied ? 'Đã chép' : 'Sao chép'}</span>
-                </button>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    type="text"
+                    readOnly
+                    value={sessionUrl}
+                    className="min-w-0 flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none select-all"
+                  />
+                  <button
+                    onClick={handleCopyLink}
+                    className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                      copied
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-blue-600 hover:bg-blue-500 text-white'
+                    }`}
+                  >
+                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    <span>{copied ? 'Đã chép' : 'Sao chép'}</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 italic">
+                  Gửi đường link này cho công nhân tại xưởng để họ mở giao diện nhập dữ liệu trực tiếp trên điện thoại/máy tính.
+                </p>
               </div>
-              <p className="text-[11px] text-slate-400 italic">
-                Gửi đường link này cho công nhân tại xưởng để họ mở giao diện nhập dữ liệu trực tiếp trên điện thoại/máy tính.
-              </p>
-            </div>
+            ) : (
+              <div className="bg-amber-50 text-amber-900 p-4 rounded-xl space-y-2 border border-amber-200">
+                <div className="flex items-center gap-1.5 text-xs font-bold">
+                  <Clock className="w-4 h-4 text-amber-600" />
+                  <span>Chưa tạo được link phiên làm việc</span>
+                </div>
+                <p className="text-xs text-amber-800">
+                  Lệnh kiểm tra đã được lưu thành công, nhưng hệ thống chưa tạo được link 24 giờ cho công nhân.
+                  Mở danh sách lệnh và dùng nút <strong>Quản lý link</strong> để tạo link cho lệnh này.
+                </p>
+                {sessionCreationError && (
+                  <p className="text-[11px] font-semibold text-amber-700">
+                    Chi tiết: {sessionCreationError}
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-2">
               <button

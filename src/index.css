@@ -1,4 +1,93 @@
 @import "tailwindcss";
+@import "driver.js/dist/driver.css";
+
+.quick-tour-popover {
+  --driver-popover-font-family: inherit;
+  min-width: min(320px, calc(100vw - 32px));
+  max-width: 340px;
+  border: 1px solid rgb(51 65 85);
+  border-radius: 14px;
+  background: rgb(15 23 42);
+  color: rgb(226 232 240);
+  box-shadow: 0 24px 60px rgba(2, 6, 23, 0.56);
+}
+
+.quick-tour-popover .driver-popover-title {
+  color: white;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.quick-tour-popover .driver-popover-description {
+  color: rgb(203 213 225);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.quick-tour-popover .driver-popover-footer {
+  border-top: 1px solid rgb(51 65 85);
+  padding-top: 12px;
+}
+
+.quick-tour-popover .driver-popover-progress-text {
+  color: rgb(148 163 184);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.quick-tour-popover .driver-popover-footer-btn,
+.quick-tour-popover .driver-popover-close-btn {
+  border: 1px solid rgb(71 85 105);
+  border-radius: 7px;
+  background: rgb(30 41 59);
+  color: rgb(226 232 240);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  padding: 7px 9px;
+}
+
+.quick-tour-popover .driver-popover-footer-btn:hover,
+.quick-tour-popover .driver-popover-footer-btn:focus,
+.quick-tour-popover .driver-popover-close-btn:hover,
+.quick-tour-popover .driver-popover-close-btn:focus {
+  background: rgb(51 65 85);
+  color: white;
+}
+
+.quick-tour-popover .driver-popover-next-btn {
+  border-color: rgb(37 99 235);
+  background: rgb(37 99 235);
+  color: white;
+}
+
+.quick-tour-popover .driver-popover-next-btn:hover,
+.quick-tour-popover .driver-popover-next-btn:focus {
+  background: rgb(29 78 216);
+}
+
+.quick-tour-popover .driver-popover-close-btn {
+  position: static;
+  width: auto;
+  height: auto;
+  margin-left: 4px;
+}
+
+.quick-tour-popover .driver-popover-arrow-side-left {
+  border-left-color: rgb(15 23 42);
+}
+
+.quick-tour-popover .driver-popover-arrow-side-right {
+  border-right-color: rgb(15 23 42);
+}
+
+.quick-tour-popover .driver-popover-arrow-side-top {
+  border-top-color: rgb(15 23 42);
+}
+
+.quick-tour-popover .driver-popover-arrow-side-bottom {
+  border-bottom-color: rgb(15 23 42);
+}
 
 html {
   min-width: 320px;
@@ -76,7 +165,8 @@ canvas {
 }
 
 .qc-builder-header {
-  background: var(--qc-bg-panel);
+  /* Keep the editing title in the same continuous surface as the form. */
+  background: var(--qc-bg-body);
   border-bottom: 1px solid var(--qc-border);
 }
 

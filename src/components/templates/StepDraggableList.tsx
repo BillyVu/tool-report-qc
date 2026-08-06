@@ -30,8 +30,10 @@ import {
   Plus
 } from 'lucide-react';
 import { InspectionStep, StepInputType, AiDetectType, PhotoSlotConfig, TextFieldConfig, PhotoType } from '../../types/qc';
-import { PHOTO_TYPE_OPTIONS, loadPhotoTypeOptions, getPhotoTypeInfo } from '../../constants/photoTypes';
+import { DEFAULT_PHOTO_TYPE_OPTIONS, PhotoTypeOption } from '../../constants/photoTypes';
 import { getWordMappingSummary, hasCompleteWordMapping } from '../../utils/docxMapping';
+import { usePhotoTypes } from '../../hooks/usePhotoTypes';
+import { suggestPhotoType } from '../../utils/photoTypeSuggestion';
 
 interface SortableStepItemProps {
   step: InspectionStep;
@@ -39,6 +41,7 @@ interface SortableStepItemProps {
   onUpdateStep: (index: number, field: keyof InspectionStep, value: any) => void;
   onRemoveStep: (index: number) => void;
   onConfigureMapping: (step: InspectionStep, index: number) => void;
+  photoTypes: PhotoTypeOption[];
 }
 
 const PRESET_PHOTO_SLOTS: { 
@@ -111,7 +114,8 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
   index,
   onUpdateStep,
   onRemoveStep,
-  onConfigureMapping
+  onConfigureMapping,
+  photoTypes
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
 
@@ -147,7 +151,8 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
     (step.photoSlots || Array.from({ length: photoCount }, (_, i) => `Slot ${i + 1}: Mô tả ảnh ${i + 1}`)).map((lbl, i) => ({
       slotIndex: i + 1,
       label: lbl,
-      photoType: 'GENERAL_OTHER'
+      photoType: 'GENERAL_OTHER',
+      captureFrame: 'RECTANGLE'
     }))
   );
 
@@ -159,7 +164,8 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
         updated.push({
           slotIndex: i + 1,
           label: `Slot ${i + 1}: Mô tả ảnh ${i + 1}`,
-          photoType: 'GENERAL_OTHER'
+          photoType: 'GENERAL_OTHER',
+          captureFrame: 'RECTANGLE'
         });
       }
     } else if (newCount < updated.length) {
@@ -188,11 +194,18 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
     onUpdateStep(index, 'photoSlotConfigs', updated);
   };
 
+  const handleSlotCaptureFrameChange = (slotIdx: number, captureFrame: 'RECTANGLE' | 'SQUARE') => {
+    const updated = [...slotConfigs];
+    updated[slotIdx] = { ...updated[slotIdx], captureFrame };
+    onUpdateStep(index, 'photoSlotConfigs', updated);
+  };
+
   const handleApplyPreset = (preset: typeof PRESET_PHOTO_SLOTS[0]) => {
     const updated: PhotoSlotConfig[] = preset.slots.map((s, idx) => ({
       slotIndex: idx + 1,
       label: s.label,
-      photoType: s.photoType
+      photoType: s.photoType,
+      captureFrame: 'RECTANGLE'
     }));
 
     onUpdateStep(index, 'requiredPhotoCount', preset.count);
@@ -281,7 +294,7 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
           {step.enableAiDetection && (
             <span className="qc-builder-chip text-[11px] font-bold px-2 py-0.5 flex items-center gap-1 text-purple-300 border-purple-500/30 bg-purple-500/10">
               <Sparkles className="w-3 h-3" />
-              <span>AI Detect</span>
+              <span>Vero kiểm tra</span>
             </span>
           )}
 
@@ -400,10 +413,10 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
                 </div>
               </div>
 
-              {/* AI Detection Toggle */}
+              {/* Vero detection toggle */}
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">
-                  Tính năng AI Auto-Detect
+                  Tính năng Vero tự kiểm tra
                 </label>
                 <label className="inline-flex items-center gap-3 text-xs font-bold text-slate-100 bg-[#1e293b] px-3 py-2 rounded-lg border border-slate-700 w-full cursor-pointer min-h-[34px]">
                   <input
@@ -413,7 +426,7 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
                     className="qc-builder-switch"
                   />
                   <Sparkles className="w-4 h-4 text-sky-400" />
-                  <span>Detect dữ liệu từ ảnh bằng AI</span>
+                  <span>Nhận dữ liệu từ ảnh bằng Vero</span>
                 </label>
               </div>
             </div>
@@ -472,11 +485,45 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
                           onChange={(e) => handleSlotPhotoTypeChange(sIdx, e.target.value as PhotoType)}
                           className="w-full text-[11px] font-bold px-1.5 py-1"
                         >
-                          {loadPhotoTypeOptions().map((opt) => (
-                            <option key={opt.type} value={opt.type}>
-                              {opt.iconEmoji} {opt.label}
-                            </option>
-                          ))}
+                          {(() => {
+                            const options = photoTypes.filter((opt) => (opt.isActive ?? true) || opt.type === slot.photoType);
+                            const hasCurrent = options.some((opt) => opt.type === slot.photoType);
+                            const currentOnly: PhotoTypeOption[] = !hasCurrent && slot.photoType ? [{
+                              type: slot.photoType,
+                              label: `${slot.photoType} (không còn trong danh sách)`,
+                              category: 'OTHER',
+                              iconEmoji: '📷',
+                              aiPromptInstruction: '',
+                              isActive: false,
+                            }] : [];
+                            return [...options, ...currentOnly].map((opt) => (
+                              <option key={opt.type} value={opt.type}>
+                                {opt.iconEmoji} {opt.label}{opt.isActive === false ? ' (đã tắt)' : ''}
+                              </option>
+                            ));
+                          })()}
+                        </select>
+                        {(() => {
+                          const suggestedType = suggestPhotoType(step.title, slot.label, step.aiDetectType);
+                          const suggested = photoTypes.find((item) => item.type === suggestedType);
+                          if (!suggested || suggestedType === slot.photoType) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => handleSlotPhotoTypeChange(sIdx, suggestedType)}
+                              className="shrink-0 rounded border border-sky-400/30 bg-sky-400/10 px-1.5 py-1 text-[10px] font-semibold text-sky-200 hover:bg-sky-400/20"
+                              title={`Vero gợi ý ${suggested.label} từ tên bước và mô tả ảnh`}
+                            >
+                              ✨ {suggested.label}
+                            </button>
+                          );
+                        })()}
+                      </div>
+                      <div className="slot-type flex items-center gap-1">
+                        <span className="text-[10px] text-slate-400 font-medium shrink-0">Khung:</span>
+                        <select value={slot.captureFrame || 'RECTANGLE'} onChange={(e) => handleSlotCaptureFrameChange(sIdx, e.target.value as 'RECTANGLE' | 'SQUARE')} className="w-full text-[11px] font-bold px-1.5 py-1">
+                          <option value="RECTANGLE">Chữ nhật 4:3</option>
+                          <option value="SQUARE">Vuông 1:1</option>
                         </select>
                       </div>
                       <label className="slot-required text-[11px] text-slate-300 font-semibold flex items-center justify-center gap-1 cursor-pointer">
@@ -585,13 +632,13 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
               </div>
             )}
 
-            {/* AI Detect Option detail panel */}
+            {/* Vero detection option detail panel */}
             {step.enableAiDetection && (
               <div className="p-3 bg-purple-500/10 rounded-xl border border-purple-500/25 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-purple-200 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-purple-300" />
-                    <span>Cấu Hình Quy Tắc AI Detection Tự Động:</span>
+                    <span>Cấu Hình Quy Tắc Vero Tự Động:</span>
                   </span>
                   <select
                     value={step.aiDetectType || 'IMEI_SERIAL'}
@@ -608,7 +655,7 @@ const SortableStepItem: React.FC<SortableStepItemProps> = ({
                   type="text"
                   value={step.aiDetectPrompt || ''}
                   onChange={(e) => onUpdateStep(index, 'aiDetectPrompt', e.target.value)}
-                  placeholder="Yêu cầu riêng cho AI (Ví dụ: Đọc số IMEI từ góc màn hình bấm *#06#)..."
+                  placeholder="Yêu cầu riêng cho Vero (Ví dụ: Đọc số IMEI từ góc màn hình bấm *#06#)..."
                   className="w-full px-3 py-1.5 text-xs"
                 />
               </div>
@@ -658,6 +705,8 @@ export const StepDraggableList: React.FC<StepDraggableListProps> = ({
   setSteps,
   onConfigureMapping
 }) => {
+  const photoTypes = usePhotoTypes();
+  const managedPhotoTypes = photoTypes.length ? photoTypes : DEFAULT_PHOTO_TYPE_OPTIONS;
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -696,6 +745,7 @@ export const StepDraggableList: React.FC<StepDraggableListProps> = ({
               onUpdateStep={handleUpdateStep}
               onRemoveStep={handleRemoveStep}
               onConfigureMapping={onConfigureMapping}
+              photoTypes={managedPhotoTypes}
             />
           ))}
         </div>

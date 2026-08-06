@@ -1,0 +1,27 @@
+INSERT INTO photo_type_options (type, label, category, icon_emoji, verification_mode, schema_version, output_schema, ai_prompt_instruction, is_system, is_active, sort_order)
+VALUES
+  ('KEYPAD_BACKLIGHT', 'Bàn phím bật sáng / đèn nền', 'OTHER', '⌨️', 'VISUAL', '1.0', '{"type":"object","required":["primaryObservation"],"properties":{"primaryObservation":{"type":"string"},"lightingUniformity":{"type":"string"}}}'::jsonb, 'Xác nhận đèn nền bàn phím sáng đều, phím hiển thị rõ, không có vùng quá tối hoặc quá chói.', true, true, 212),
+  ('KEYPAD_DETAIL', 'Góc phím bấm chi tiết', 'OTHER', '🔘', 'VISUAL', '1.0', '{"type":"object","required":["primaryObservation"],"properties":{"primaryObservation":{"type":"string"},"keyCondition":{"type":"string"}}}'::jsonb, 'Quan sát chi tiết phím bấm: bề mặt phím, ký tự in, độ đồng đều và dấu hiệu kẹt hoặc hỏng nếu nhìn thấy.', true, true, 213),
+  ('SPEAKERPHONE_VOICE', 'Loa ngoài / lệnh thoại', 'OTHER', '🔊', 'SCREEN_STATE', '1.0', '{"type":"object","required":["screenState"],"properties":{"screenState":{"type":"string"},"visibleTexts":{"type":"array"}}}'::jsonb, 'Chỉ xác nhận bằng chứng nhìn thấy trên màn hình hoặc giao diện test loa/voice command. Không khẳng định chất lượng âm thanh nếu ảnh không thể hiện trực tiếp.', true, true, 214),
+  ('CAMERA_VIDEO_PREVIEW', 'Preview video đã quay', 'CAMERA', '🎥', 'SCREEN_STATE', '1.0', '{"type":"object","required":["screenState"],"properties":{"screenState":{"type":"string"},"visibleTexts":{"type":"array"}}}'::jsonb, 'Xác nhận màn hình preview hoặc kết quả video có hiển thị đúng nội dung quay. Không suy đoán chất lượng âm thanh.', true, true, 215),
+  ('WIFI_CONNECTED', 'Wi-Fi đã kết nối', 'OTHER', '📡', 'SCREEN_STATE', '1.0', '{"type":"object","required":["screenState"],"properties":{"screenState":{"type":"string"},"ssid":{"type":"string"},"visibleTexts":{"type":"array"}}}'::jsonb, 'Xác nhận trạng thái Wi-Fi dựa trên SSID hoặc biểu tượng và kết nối hiển thị trực tiếp trên màn hình.', true, true, 216),
+  ('SD_CARD_STORAGE', 'Nhận thẻ nhớ SD', 'OTHER', '💾', 'SCREEN_STATE', '1.0', '{"type":"object","required":["screenState"],"properties":{"screenState":{"type":"string"},"storageValue":{"type":"string"},"visibleTexts":{"type":"array"}}}'::jsonb, 'Xác nhận thiết bị nhận thẻ SD hoặc hiển thị dung lượng lưu trữ liên quan. Không bịa số liệu bị che.', true, true, 217),
+  ('FLASHLIGHT_LED', 'Đèn pin LED sáng', 'OTHER', '🔦', 'VISUAL', '1.0', '{"type":"object","required":["primaryObservation"],"properties":{"primaryObservation":{"type":"string"},"lightVisible":{"type":"string"}}}'::jsonb, 'Quan sát trực tiếp đèn LED có sáng rõ trong ảnh hay không. Không kết luận cường độ chính xác nếu ảnh không đủ bằng chứng.', true, true, 218),
+  ('HEADSET_AUDIO', 'Tai nghe / jack headset', 'OTHER', '🎧', 'VISUAL', '1.0', '{"type":"object","required":["primaryObservation"],"properties":{"primaryObservation":{"type":"string"},"accessoryState":{"type":"string"}}}'::jsonb, 'Chỉ xác nhận jack hoặc tai nghe đã cắm đúng hoặc phụ kiện hiện diện trong ảnh. Không khẳng định âm thanh hai bên nếu ảnh không thể hiện.', true, true, 219),
+  ('CHARGING_OTG', 'Sạc pin / OTG', 'OTHER', '🔌', 'SCREEN_STATE', '1.0', '{"type":"object","required":["screenState"],"properties":{"screenState":{"type":"string"},"visibleTexts":{"type":"array"}}}'::jsonb, 'Xác nhận trạng thái đang sạc hoặc OTG dựa trên biểu tượng, thông báo hoặc giao diện hiển thị trực tiếp.', true, true, 220),
+  ('VIBRATION_TEST', 'Kiểm tra rung', 'OTHER', '📳', 'EVIDENCE_ONLY', '1.0', '{"type":"object","required":[],"properties":{"primaryObservation":{"type":"string"}}}'::jsonb, 'Ảnh đơn không đủ chứng minh rung hoạt động. Chỉ trả bằng chứng nhìn thấy hoặc INSUFFICIENT_EVIDENCE.', true, true, 221),
+  ('EMERGENCY_CALL_112', 'Cuộc gọi khẩn 112', 'OTHER', '📞', 'SCREEN_STATE', '1.0', '{"type":"object","required":["screenState"],"properties":{"screenState":{"type":"string"},"visibleTexts":{"type":"array"}}}'::jsonb, 'Xác nhận màn hình quay số hoặc cuộc gọi 112 nếu hiển thị rõ. Không khẳng định kết nối thành công nếu ảnh không cho thấy.', true, true, 222),
+  ('GOOGLE_APPS', 'Google Apps', 'OTHER', '🌐', 'SCREEN_STATE', '1.0', '{"type":"object","required":["screenState"],"properties":{"screenState":{"type":"string"},"visibleTexts":{"type":"array"}}}'::jsonb, 'Xác nhận ứng dụng Google hoặc giao diện đăng nhập, dịch vụ Google đang mở trên màn hình.', true, true, 223),
+  ('SIM_SD_REMOVAL', 'Tháo pin / khe SIM SD', 'OTHER', '🪫', 'VISUAL', '1.0', '{"type":"object","required":["primaryObservation"],"properties":{"primaryObservation":{"type":"string"},"visiblePart":{"type":"string"}}}'::jsonb, 'Quan sát tình trạng tháo pin, khe SIM hoặc khe SD đang mở hoặc hiển thị trong ảnh.', true, true, 224),
+  ('FINAL_PACKAGING', 'Tổng thể đóng gói cuối', 'OTHER', '📦', 'VISUAL', '1.0', '{"type":"object","required":["primaryObservation"],"properties":{"primaryObservation":{"type":"string"},"packagingState":{"type":"string"}}}'::jsonb, 'Quan sát tổng thể lô máy hoặc đóng gói cuối. Không suy đoán số lượng chính xác nếu ảnh không thể hiện đầy đủ.', true, true, 225)
+ON CONFLICT (type) DO UPDATE SET
+  label = EXCLUDED.label,
+  category = EXCLUDED.category,
+  icon_emoji = EXCLUDED.icon_emoji,
+  verification_mode = EXCLUDED.verification_mode,
+  schema_version = EXCLUDED.schema_version,
+  output_schema = EXCLUDED.output_schema,
+  ai_prompt_instruction = EXCLUDED.ai_prompt_instruction,
+  is_system = true,
+  sort_order = EXCLUDED.sort_order,
+  updated_at = now();

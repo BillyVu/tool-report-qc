@@ -1,23 +1,19 @@
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
 import { GoogleGenAI } from '@google/genai';
+import { attachAnalysisSummaryToStepResults } from './adminJobs.js';
 import { db } from './db.js';
 import { dispatchPendingGeminiJobs } from './geminiOutbox.js';
 import { classifyGeminiError, retryDelayMs, shouldOpenCircuit } from './geminiPolicy.js';
 import { createGeminiQueueChannel, GEMINI_ANALYSIS_QUEUE, GEMINI_DEAD_LETTER_QUEUE, GEMINI_RETRY_QUEUE, parseGeminiMessage, publishGeminiJob, retryConnection } from './queue.js';
+import { parseAndValidateVeroAnalysisResult, summarizeVeroAnalysis, toAnalysisJsonb } from './veroAnalysis.js';
+import { workerSessionRealtime } from './workerRealtime.js';
 
 const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
 const minIntervalMs = Math.ceil(60_000 / Math.max(1, Number(process.env.GEMINI_MAX_RPM || 10)));
 const circuitCooldownMs = Number(process.env.GEMINI_CIRCUIT_COOLDOWN_MS || 300_000);
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-
-function promptFor(detectType: string): string {
-  if (detectType === 'IMEI_SERIAL') return 'Trích xuất chính xác IMEI 15 số hoặc số serial. Chỉ trả về dữ liệu nhìn thấy, không suy đoán.';
-  if (detectType === 'OCR_TEXT') return 'Trích xuất văn bản và thông số nhìn thấy trong ảnh. Không tự suy đoán.';
-  if (detectType === 'COLOR_SCREEN') return 'Mô tả tình trạng màu màn hình và lỗi nhìn thấy trong ảnh. Không kết luận nếu ảnh không đủ dữ liệu.';
-  return 'Phân tích ảnh kiểm định QC, chỉ nêu quan sát có thể xác minh từ ảnh.';
-}
 
 async function waitForGeminiSlot(): Promise<number> {
   const client = await db.connect();
@@ -72,15 +68,66 @@ async function startGeminiWorker() {
         channel.ack(raw);
         return;
       }
-      const analysis = await db.query(`SELECT a.*, p.storage_path, p.mime_type FROM gemini_analyses a JOIN evidence_photos p ON p.id = a.photo_id WHERE a.id = $1 AND a.photo_id = $2`, [message.analysisId, message.photoId]);
+      const analysis = await db.query(`SELECT a.*, p.storage_path, p.mime_type, p.job_id, p.step_id, p.slot_index FROM gemini_analyses a JOIN evidence_photos p ON p.id = a.photo_id WHERE a.id = $1 AND a.photo_id = $2`, [message.analysisId, message.photoId]);
       if (!analysis.rowCount || analysis.rows[0].status === 'COMPLETED') { channel.ack(raw); return; }
       const row = analysis.rows[0];
       await db.query(`UPDATE gemini_analyses SET status = 'PROCESSING', updated_at = now() WHERE id = $1`, [message.analysisId]);
       const image = await readFile(`${uploadsDirectory}/${row.storage_path}`);
-      const response = await ai.models.generateContent({ model, contents: [{ inlineData: { data: image.toString('base64'), mimeType: row.mime_type } }, { text: promptFor(row.detect_type) }] });
-      await db.query(`UPDATE gemini_analyses SET status = 'COMPLETED', result_text = $2, error_message = NULL, completed_at = now(), updated_at = now() WHERE id = $1`, [message.analysisId, response.text || '']);
+      if (!row.prompt_instruction) throw new Error('Missing Vero prompt snapshot for analysis.');
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ inlineData: { data: image.toString('base64'), mimeType: row.mime_type } }, { text: row.prompt_instruction }],
+        config: { responseMimeType: 'application/json', temperature: 0 },
+      });
+      const resultText = response.text || '';
+      const validation = parseAndValidateVeroAnalysisResult(resultText, {
+        type: row.photo_type || 'GENERAL_OTHER',
+        verificationMode: row.verification_mode || 'EVIDENCE_ONLY',
+        schemaVersion: row.schema_version || '1.0',
+        outputSchema: row.output_schema || { type: 'object', required: [], properties: {} },
+      });
+      if ('errors' in validation) {
+        const validationErrors = validation.errors;
+        const detail = validationErrors.join(' | ').slice(0, 500);
+        await db.query(`UPDATE gemini_analyses SET status = 'FAILED_FINAL', result_text = $2, validation_status = 'INVALID_SCHEMA', validation_errors = $3, error_message = $4, updated_at = now() WHERE id = $1`, [message.analysisId, resultText, JSON.stringify(validationErrors), detail]);
+        await db.query(`UPDATE background_jobs SET status = 'FAILED', attempts = attempts + 1, last_error = $2, updated_at = now() WHERE type = 'GEMINI_ANALYZE' AND payload->>'analysisId' = $1`, [message.analysisId, detail]);
+        workerSessionRealtime.publish(row.job_id, {
+          type: 'ANALYSIS_FAILED',
+          photoId: row.photo_id,
+          stepId: row.step_id,
+          slotIndex: Number(row.slot_index),
+          message: 'Kết quả Vero không đúng schema đã cấu hình.',
+        });
+        channel.ack(raw);
+        return;
+      }
+      const summaryText = summarizeVeroAnalysis(validation.value);
+      await db.query(`UPDATE gemini_analyses SET status = 'COMPLETED', result_text = $2, result_json = $3, validation_status = 'VALID', validation_errors = NULL, error_message = NULL, completed_at = now(), updated_at = now() WHERE id = $1`, [message.analysisId, resultText, toAnalysisJsonb(validation.value)]);
+      const job = await db.query(`SELECT id, step_results FROM inspection_jobs WHERE id = $1`, [row.job_id]);
+      if (job.rowCount) {
+        const updated = attachAnalysisSummaryToStepResults(job.rows[0].step_results, {
+          stepId: row.step_id,
+          slotIndex: Number(row.slot_index),
+          aiDetectedText: summaryText,
+          aiDetectedValue: summaryText,
+          aiDetectStatus: validation.value.status === 'PASS' ? 'SUCCESS' : validation.value.status === 'INSUFFICIENT_EVIDENCE' ? 'WARNING' : 'FAILED',
+        });
+        if (updated.found) {
+          await db.query(`UPDATE inspection_jobs SET step_results = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [row.job_id, JSON.stringify(updated.updatedSteps)]);
+        }
+      }
+      await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'SYSTEM', 'Vero', 'PHOTO_ANALYSIS_COMPLETED', $2)`, [row.job_id, toAnalysisJsonb(validation.value)]);
       await db.query(`UPDATE background_jobs SET status = 'COMPLETED', completed_at = now(), updated_at = now() WHERE type = 'GEMINI_ANALYZE' AND payload->>'analysisId' = $1`, [message.analysisId]);
       await db.query(`UPDATE gemini_control SET consecutive_quota_failures = 0, circuit_open_until = NULL, updated_at = now() WHERE id = true`);
+      workerSessionRealtime.publish(row.job_id, {
+        type: 'ANALYSIS_COMPLETED',
+        photoId: row.photo_id,
+        stepId: row.step_id,
+        slotIndex: Number(row.slot_index),
+        summaryText,
+        resultJson: validation.value as unknown as Record<string, unknown>,
+        message: 'Vero đã phân tích xong ảnh này.',
+      });
       channel.ack(raw);
     } catch (error) {
       if (!message) { channel.sendToQueue(GEMINI_DEAD_LETTER_QUEUE, raw.content, { persistent: true }); await channel.waitForConfirms(); channel.ack(raw); return; }
@@ -93,8 +140,18 @@ async function startGeminiWorker() {
         await publishGeminiJob(channel, { ...message, attempts }, GEMINI_RETRY_QUEUE, delayMs);
       } else {
         const detail = error instanceof Error ? error.message.slice(0, 500) : 'Gemini analysis failed';
-        await db.query(`UPDATE gemini_analyses SET status = 'FAILED_FINAL', attempts = $2, error_message = $3, updated_at = now() WHERE id = $1`, [message.analysisId, attempts, detail]);
+        await db.query(`UPDATE gemini_analyses SET status = 'FAILED_FINAL', attempts = $2, validation_status = 'FAILED_MODEL', error_message = $3, updated_at = now() WHERE id = $1`, [message.analysisId, attempts, detail]);
         await db.query(`UPDATE background_jobs SET status = 'FAILED', attempts = $2, last_error = $3, updated_at = now() WHERE type = 'GEMINI_ANALYZE' AND payload->>'analysisId' = $1`, [message.analysisId, attempts, detail]);
+        const analysisRow = await db.query(`SELECT p.job_id, p.step_id, p.slot_index, a.photo_id FROM gemini_analyses a JOIN evidence_photos p ON p.id = a.photo_id WHERE a.id = $1`, [message.analysisId]);
+        if (analysisRow.rowCount) {
+          workerSessionRealtime.publish(analysisRow.rows[0].job_id, {
+            type: 'ANALYSIS_FAILED',
+            photoId: analysisRow.rows[0].photo_id,
+            stepId: analysisRow.rows[0].step_id,
+            slotIndex: Number(analysisRow.rows[0].slot_index),
+            message: detail,
+          });
+        }
         await publishGeminiJob(channel, { ...message, attempts }, GEMINI_DEAD_LETTER_QUEUE);
       }
       channel.ack(raw);

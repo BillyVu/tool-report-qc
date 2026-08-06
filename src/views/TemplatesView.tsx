@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FileCheck2, 
   Plus, 
@@ -11,13 +11,15 @@ import {
   Check, 
   Tag,
   ArrowUpDown,
-  Eye
+  Eye,
+  CircleHelp
 } from 'lucide-react';
 import { ChecklistTemplate } from '../types/qc';
 import { adminApi } from '../services/adminApi';
 import { TemplateFormModal } from '../components/templates/TemplateFormModal';
 import { TemplatePreviewModal } from '../components/templates/TemplatePreviewModal';
 import { getWordMappingSummary, hasCompleteWordMapping } from '../utils/docxMapping';
+import { TemplateQuickTour } from '../components/onboarding/TemplateQuickTour';
 
 export const TemplatesView: React.FC = () => {
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
@@ -32,6 +34,11 @@ export const TemplatesView: React.FC = () => {
   // Preview Modal state
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<ChecklistTemplate | null>(null);
+  const startTemplateTourRef = useRef<(() => void) | null>(null);
+
+  const handleTemplateTourReady = useCallback((startTour: () => void) => {
+    startTemplateTourRef.current = startTour;
+  }, []);
 
   const reloadTemplates = async () => {
     setIsLoading(true);
@@ -107,11 +114,22 @@ export const TemplatesView: React.FC = () => {
     t.docxTemplateName.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  if (isModalOpen) {
+    return (
+      <TemplateFormModal
+        isOpen
+        onClose={() => setIsModalOpen(false)}
+        template={selectedTemplate}
+        onSave={handleSaveTemplate}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
+        <div data-tour="template-page-title">
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
             Quản Lý Mẫu Checklist QC & Ánh Xạ Thẻ Word (.docx)
           </h1>
@@ -120,17 +138,28 @@ export const TemplatesView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={handleCreateNew}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg shadow-md shadow-blue-500/20 transition-all flex items-center gap-2 self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Tạo Mẫu QC Mới</span>
-        </button>
+        <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={() => startTemplateTourRef.current?.()}
+            className="px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg border border-slate-300 transition-colors flex items-center gap-1.5"
+          >
+            <CircleHelp className="w-4 h-4 text-blue-600" />
+            <span>Hướng dẫn nhanh</span>
+          </button>
+          <button
+            data-tour="template-create"
+            onClick={handleCreateNew}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg shadow-md shadow-blue-500/20 transition-all flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tạo Mẫu QC Mới</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div data-tour="template-search" className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
@@ -167,7 +196,7 @@ export const TemplatesView: React.FC = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div data-tour="template-list" className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {filteredTemplates.map((tmpl) => (
           <div
             key={tmpl.id}
@@ -226,6 +255,9 @@ export const TemplatesView: React.FC = () => {
                         <Tag className="w-3 h-3" />
                         <span>{getWordMappingSummary(step)}</span>
                       </div>
+                      <div className="w-full text-[10px] text-slate-500 sm:order-3 sm:w-auto">
+                        Xem nhanh: {step.requiredPhotoCount || step.photoSlots?.length || 0} ảnh · ghi chú · trạng thái
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -276,19 +308,13 @@ export const TemplatesView: React.FC = () => {
       </div>
 
       {/* Modal Form Builder */}
-      <TemplateFormModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        template={selectedTemplate}
-        onSave={handleSaveTemplate}
-      />
-
       {/* Template Worker Interactive Preview Modal */}
       <TemplatePreviewModal
         isOpen={isPreviewOpen}
         onClose={() => setIsPreviewOpen(false)}
         template={previewTemplate}
       />
+      <TemplateQuickTour kind="management" onReady={handleTemplateTourReady} />
     </div>
   );
 };

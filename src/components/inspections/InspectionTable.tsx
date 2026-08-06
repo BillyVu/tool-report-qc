@@ -138,7 +138,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
                 <span>ĐANG LÀM</span>
               </span>
             )}
-            <div className={`mt-1 text-[10px] font-semibold ${
+            <div title="Số bước đã được QC Admin duyệt trên tổng số bước của lô" className={`mt-1 text-[10px] font-semibold ${
               reviewSummary.rejected > 0 ? 'text-red-700' : reviewSummary.pending > 0 ? 'text-amber-700' : 'text-blue-700'
             }`}>
               Admin: {reviewSummary.approved}/{row.original.stepResults.length} duyệt
@@ -173,7 +173,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
           : false;
         const hasCopyableSession = hasSession && !isSessionExpired && !!row.original.sessionToken;
         const hasLegacySession = hasSession && !isSessionExpired && !row.original.sessionToken;
-        const defaultLabel = isSessionExpired ? 'Hết hạn sử dụng' : hasCopyableSession ? 'Copy link' : hasLegacySession ? 'Link cũ' : 'Gen link';
+        const defaultLabel = isSessionExpired ? 'Gia hạn link Worker' : hasCopyableSession ? 'Copy link' : hasLegacySession ? 'Link cũ' : 'Tạo link Worker';
         return (
           <div className="flex min-w-[360px] flex-wrap items-center justify-end gap-1.5">
             {onQuickGenerateSessionUrl && (
@@ -196,7 +196,7 @@ export const InspectionTable: React.FC<InspectionTableProps> = ({
                         ? 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
                         : 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-200'
                 }`}
-                title={isSessionExpired ? 'Link đã hết hạn. Mở quản lý link để gia hạn.' : hasCopyableSession ? 'Copy session link hiện có' : hasLegacySession ? 'Link cũ thiếu token nên không copy nhanh được. Mở quản lý link để xem trạng thái.' : 'Tạo session link lần đầu 24h và copy ngay vào clipboard'}
+                title={isSessionExpired ? 'Lô vẫn đang làm, nhưng link Worker đã hết hạn. Bấm để gia hạn và copy link mới.' : hasCopyableSession ? 'Copy session link hiện có' : hasLegacySession ? 'Link cũ thiếu token nên không copy nhanh được. Mở quản lý link để xem trạng thái.' : 'Tạo session link lần đầu 24h và copy ngay vào clipboard'}
               >
                 {quickState === 'generating' ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />

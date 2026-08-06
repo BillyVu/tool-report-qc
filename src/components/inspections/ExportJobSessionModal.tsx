@@ -33,6 +33,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   const [isExtending, setIsExtending] = useState(false);
   const [extensionHours, setExtensionHours] = useState<1 | 2 | 4>(1);
   const [error, setError] = useState('');
+  const [extendSuccess, setExtendSuccess] = useState('');
   const [sessionInfo, setSessionInfo] = useState<{
     sessionUrl: string;
     createdAt: string;
@@ -52,6 +53,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
       setCopied(false);
       setExtensionHours(1);
       setError('');
+      setExtendSuccess('');
     }
   }, [isOpen, job?.id]);
 
@@ -65,6 +67,7 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   const createdDate = sessionInfo?.createdAt || extendedSessionInfo?.createdAt || job?.sessionCreatedAt;
   const expiresDate = sessionInfo?.expiresAt || extendedSessionInfo?.expiresAt || job?.sessionExpiresAt;
   const hasExistingSession = !!job?.sessionCreatedAt;
+  const hasExtendedLegacySession = hasExistingSession && !!extendedSessionInfo && !extendedSessionInfo.token && !currentSessionUrl;
   const isExpired = expiresDate ? new Date(expiresDate).getTime() < Date.now() : false;
   const remainingLabel = useMemo(() => {
     if (!expiresDate) return '';
@@ -103,11 +106,17 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
   const handleExtendSession = async () => {
     setIsExtending(true);
     setError('');
+    setExtendSuccess('');
     try {
       const res = await adminApi.extendWorkerSession(job.id, extensionHours);
       setExtendedSessionInfo({ createdAt: res.createdAt, expiresAt: res.expiresAt, token: res.token });
       setSessionInfo(prev => prev ? { ...prev, createdAt: res.createdAt, expiresAt: res.expiresAt } : null);
-      await onSessionCreated?.();
+      setExtendSuccess(`Đã gia hạn link đến ${new Date(res.expiresAt).toLocaleString('vi-VN')}.`);
+      try {
+        await onSessionCreated?.();
+      } catch (reloadError) {
+        console.error('Failed to reload jobs after extending session URL:', reloadError);
+      }
     } catch (e) {
       console.error('Failed to extend session URL:', e);
       setError(e instanceof Error ? e.message : 'Không thể gia hạn session link từ server.');
@@ -185,6 +194,12 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
           {error && (
             <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-xs font-semibold text-red-700">
               {error}
+            </div>
+          )}
+
+          {extendSuccess && (
+            <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50 text-xs font-semibold text-emerald-800">
+              {extendSuccess}
             </div>
           )}
 
@@ -308,6 +323,15 @@ export const ExportJobSessionModal: React.FC<ExportJobSessionModalProps> = ({
                     <span className={`block text-[11px] font-semibold ${isExpired ? 'text-red-700' : 'text-amber-700'}`}>Hết hạn lúc</span>
                     <span className={`font-bold ${isExpired ? 'text-red-950' : 'text-amber-950'}`}>{new Date(expiresDate).toLocaleString('vi-VN')}</span>
                   </div>
+                </div>
+              )}
+
+              {hasExtendedLegacySession && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  <p className="font-bold">Đã gia hạn hiệu lực link cũ.</p>
+                  <p className="mt-1">
+                    Link vẫn không thể copy lại vì database không còn token gốc. Không gen link mới cho lệnh này.
+                  </p>
                 </div>
               )}
 

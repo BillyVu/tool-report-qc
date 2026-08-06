@@ -2,9 +2,11 @@ import 'dotenv/config';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
+import { createServer } from 'node:http';
 import { join } from 'node:path';
 import express, { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
+import { WebSocketServer } from 'ws';
 import { db } from './db.js';
 import { createSessionToken, hashSessionToken, verifySessionToken } from './session.js';
 import { imageUploadFilter } from './uploads.js';
@@ -12,13 +14,20 @@ import { enqueuePhotoProcessing } from './outbox.js';
 import { enqueueGeminiAnalysis } from './geminiOutbox.js';
 import { toJsonbParam } from './jsonParam.js';
 import { serializeTemplateRow, templateDbParams } from './templates.js';
-import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, moderateStepResults, updateJobStatusSql } from './adminJobs.js';
+import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs.js';
 import { buildX530CustomerReport, isCustomerDocxTemplate } from './customerDocx.js';
+import { createPhotoTypeParams, serializePhotoTypeRow, updatePhotoTypeParams } from './photoTypes.js';
+import { DEFAULT_MIN_SHARPNESS_SCORE, inspectPhotoFile, isFourByThree, isSquare, validatePhotoWithAi } from './photoQuality.js';
+import { inferPhotoTypeFromContext } from './photoTypeInference.js';
+import { buildAnalysisPrompt, buildQualityPrompt, getVeroPromptProfile, isPromptVerified, listVeroPromptProfiles, promptHash, updateVeroPromptInstruction, VERO_PROMPT_KEYS, VeroPromptKey } from './veroPrompts.js';
+import { defaultOutputSchemaForMode, mapVerificationModeToDetectType, normalizeOutputSchema, normalizeSchemaVersion, normalizeVerificationMode, serializeAnalysisRow } from './veroAnalysis.js';
+import { workerSessionRealtime } from './workerRealtime.js';
 
 const port = Number(process.env.PORT || 3000);
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
 const docxTemplatesDirectory = process.env.DOCX_TEMPLATES_DIR || '/srv/tool-report-qc/templates';
 const adminApiKey = process.env.QC_ADMIN_API_KEY;
+const botName = process.env.BOT_NAME || 'Vero';
 
 if (!adminApiKey) throw new Error('QC_ADMIN_API_KEY is required');
 mkdirSync(uploadsDirectory, { recursive: true });
@@ -48,6 +57,37 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+async function resolvePhotoPromptContext(templateSnapshot: any, stepId: string, slotIndex: number) {
+  const step = Array.isArray(templateSnapshot?.steps)
+    ? templateSnapshot.steps.find((item: any) => item?.stepId === stepId)
+    : undefined;
+  const slot = Array.isArray(step?.photoSlotConfigs)
+    ? step.photoSlotConfigs.find((item: any) => Number(item?.slotIndex) === slotIndex)
+    : undefined;
+  const photoLabel = typeof slot?.label === 'string'
+    ? slot.label
+    : Array.isArray(step?.photoSlots) && typeof step.photoSlots[slotIndex - 1] === 'string'
+      ? step.photoSlots[slotIndex - 1]
+      : typeof step?.title === 'string'
+        ? step.title
+        : 'Ảnh kiểm định';
+  const inferredPhotoType = inferPhotoTypeFromContext({
+    stepTitle: step?.title,
+    slotLabel: photoLabel,
+    aiDetectType: step?.aiDetectType,
+  });
+  const photoType = typeof slot?.photoType === 'string' && slot.photoType.trim() ? slot.photoType : inferredPhotoType;
+  const option = await db.query('SELECT ai_prompt_instruction, verification_mode, schema_version, output_schema FROM photo_type_options WHERE type = $1', [photoType]);
+  return {
+    photoType,
+    photoLabel,
+    photoInstruction: option.rows[0]?.ai_prompt_instruction || 'Phân tích tổng quan hình ảnh kiểm định QC sản phẩm điện tử, chỉ kết luận theo bằng chứng nhìn thấy trực tiếp.',
+    verificationMode: normalizeVerificationMode(option.rows[0]?.verification_mode),
+    schemaVersion: normalizeSchemaVersion(option.rows[0]?.schema_version),
+    outputSchema: normalizeOutputSchema(option.rows[0]?.output_schema),
+  };
+}
+
 async function getSession(jobId: string, token: string) {
   const result = await db.query(
     `SELECT s.*, j.external_id AS job_external_id, j.batch_number, j.product_code, j.product_name, j.status,
@@ -60,7 +100,9 @@ async function getSession(jobId: string, token: string) {
                   jsonb_build_object(
                     'stepId', ep.step_id,
                     'slotIndex', ep.slot_index,
-                    'photoUrl', '/uploads/' || ep.storage_path
+                    'photoUrl', '/uploads/' || ep.storage_path,
+                    'manualOverride', ep.manual_override,
+                    'aiQualityStatus', ep.ai_quality_status
                   )
                   ORDER BY ep.step_id, ep.slot_index, ep.created_at
                 ) AS evidence_photos
@@ -87,6 +129,7 @@ function serializeWorkerSession(session: any) {
     template: session.template_snapshot,
     expiresAt: session.expires_at,
     checkedInAt: session.checked_in_at,
+    botName,
   };
 }
 
@@ -100,7 +143,9 @@ async function getHydratedJobById(jobId: string) {
                   jsonb_build_object(
                     'stepId', ep.step_id,
                     'slotIndex', ep.slot_index,
-                    'photoUrl', '/uploads/' || ep.storage_path
+                    'photoUrl', '/uploads/' || ep.storage_path,
+                    'manualOverride', ep.manual_override,
+                    'aiQualityStatus', ep.ai_quality_status
                   )
                   ORDER BY ep.step_id, ep.slot_index, ep.created_at
                 ) AS evidence_photos
@@ -149,6 +194,251 @@ app.use('/uploads', express.static(uploadsDirectory));
 app.get('/api/health', async (_req, res) => {
   await db.query('SELECT 1');
   res.json({ status: 'ok' });
+});
+
+app.get('/api/photo-types', async (_req, res) => {
+  const result = await db.query(
+    `SELECT type, label, category, icon_emoji, verification_mode, schema_version, output_schema, ai_prompt_instruction, is_system, is_active, sort_order, created_at, updated_at
+       FROM photo_type_options
+      ORDER BY sort_order ASC, label ASC`,
+  );
+  res.json(result.rows.map(serializePhotoTypeRow));
+});
+
+app.get('/api/admin/photo-types', requireAdmin, async (_req, res) => {
+  const result = await db.query(
+    `SELECT type, label, category, icon_emoji, verification_mode, schema_version, output_schema, ai_prompt_instruction, is_system, is_active, sort_order, created_at, updated_at
+       FROM photo_type_options
+      ORDER BY sort_order ASC, label ASC`,
+  );
+  res.json(result.rows.map(serializePhotoTypeRow));
+});
+
+app.get('/api/admin/vero-prompt-profiles', requireAdmin, async (_req, res) => {
+  res.json(await listVeroPromptProfiles());
+});
+
+app.patch('/api/admin/vero-prompt-profiles/:profileKey', requireAdmin, async (req, res) => {
+  const profileKey = req.params.profileKey as VeroPromptKey;
+  if (!VERO_PROMPT_KEYS.includes(profileKey)) return res.status(404).json({ error: 'Không tìm thấy cấu hình Vero.' });
+  let instruction: string;
+  try {
+    instruction = updateVeroPromptInstruction(req.body?.instruction);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Cấu hình Vero không hợp lệ.' });
+  }
+  const result = await db.query(
+    `UPDATE vero_prompt_profiles
+        SET instruction = $2,
+            revision = revision + 1,
+            verified_at = NULL,
+            verified_by = NULL,
+            verified_revision = NULL,
+            verified_prompt_hash = NULL,
+            updated_at = now()
+      WHERE profile_key = $1
+      RETURNING profile_key, label, description, instruction, revision, verified_at, verified_by, verified_revision, verified_prompt_hash, updated_at`,
+    [profileKey, instruction],
+  );
+  await db.query(
+    `INSERT INTO audit_events (actor_type, actor_label, action, payload)
+     VALUES ('ADMIN', 'QC Admin', 'VERO_PROMPT_PUBLISHED', $1)`,
+    [toJsonbParam({ profileKey, revision: result.rows[0]?.revision, promptHash: promptHash(instruction) })],
+  );
+  res.json(result.rows[0] ? {
+    profileKey: result.rows[0].profile_key,
+    label: result.rows[0].label,
+    description: result.rows[0].description,
+    instruction: result.rows[0].instruction,
+    revision: Number(result.rows[0].revision),
+    verifiedAt: result.rows[0].verified_at,
+    verifiedBy: result.rows[0].verified_by,
+    verifiedRevision: result.rows[0].verified_revision === null ? null : Number(result.rows[0].verified_revision),
+    verifiedPromptHash: result.rows[0].verified_prompt_hash,
+    updatedAt: result.rows[0].updated_at,
+  } : null);
+});
+
+app.post('/api/admin/vero-prompt-profiles/:profileKey/verify', requireAdmin, async (req, res) => {
+  const profileKey = req.params.profileKey as VeroPromptKey;
+  if (!VERO_PROMPT_KEYS.includes(profileKey)) return res.status(404).json({ error: 'Không tìm thấy cấu hình Vero.' });
+  const profile = await getVeroPromptProfile(profileKey);
+  const hash = promptHash(profile.instruction);
+  const result = await db.query(
+    `UPDATE vero_prompt_profiles
+        SET verified_at = now(),
+            verified_by = 'QC Admin',
+            verified_revision = revision,
+            verified_prompt_hash = $2,
+            updated_at = now()
+      WHERE profile_key = $1
+      RETURNING profile_key, label, description, instruction, revision, verified_at, verified_by, verified_revision, verified_prompt_hash, updated_at`,
+    [profileKey, hash],
+  );
+  await db.query(
+    `INSERT INTO audit_events (actor_type, actor_label, action, payload)
+     VALUES ('ADMIN', 'QC Admin', 'VERO_PROMPT_VERIFIED', $1)`,
+    [toJsonbParam({ profileKey, revision: profile.revision, promptHash: hash })],
+  );
+  res.json(result.rows[0] ? {
+    profileKey: result.rows[0].profile_key,
+    label: result.rows[0].label,
+    description: result.rows[0].description,
+    instruction: result.rows[0].instruction,
+    revision: Number(result.rows[0].revision),
+    verifiedAt: result.rows[0].verified_at,
+    verifiedBy: result.rows[0].verified_by,
+    verifiedRevision: result.rows[0].verified_revision === null ? null : Number(result.rows[0].verified_revision),
+    verifiedPromptHash: result.rows[0].verified_prompt_hash,
+    updatedAt: result.rows[0].updated_at,
+  } : null);
+});
+
+app.post('/api/admin/photo-types', requireAdmin, async (req, res) => {
+  let params;
+  try {
+    params = createPhotoTypeParams(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Loại ảnh không hợp lệ.' });
+  }
+  try {
+    const result = await db.query(
+      `INSERT INTO photo_type_options (type, label, category, icon_emoji, verification_mode, schema_version, output_schema, ai_prompt_instruction, prompt_verified_at, prompt_verified_by, prompt_verified_hash, is_system, is_active, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL, NULL, false, $9, $10)
+       RETURNING type, label, category, icon_emoji, verification_mode, schema_version, output_schema, ai_prompt_instruction, prompt_verified_at, prompt_verified_by, prompt_verified_hash, is_system, is_active, sort_order, created_at, updated_at`,
+      [params.type, params.label, params.category, params.iconEmoji, params.verificationMode, params.schemaVersion, toJsonbParam(params.outputSchema), params.aiPromptInstruction, params.isActive, params.sortOrder],
+    );
+    await db.query(
+      `INSERT INTO audit_events (actor_type, actor_label, action, payload)
+       VALUES ('ADMIN', 'QC Admin', 'PHOTO_TYPE_CREATED', $1)`,
+      [toJsonbParam({ type: params.type })],
+    );
+    res.status(201).json(serializePhotoTypeRow(result.rows[0]));
+  } catch (error: any) {
+    if (error?.code === '23505') return res.status(409).json({ error: 'Mã loại ảnh đã tồn tại.' });
+    throw error;
+  }
+});
+
+app.patch('/api/admin/photo-types/:type', requireAdmin, async (req, res) => {
+  let params;
+  try {
+    params = updatePhotoTypeParams(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Loại ảnh không hợp lệ.' });
+  }
+  const result = await db.query(
+    `UPDATE photo_type_options
+        SET label = COALESCE($2, label),
+            category = COALESCE($3, category),
+            icon_emoji = COALESCE($4, icon_emoji),
+            verification_mode = COALESCE($5, verification_mode),
+            schema_version = COALESCE($6, schema_version),
+            output_schema = COALESCE($7, output_schema),
+            ai_prompt_instruction = COALESCE($8, ai_prompt_instruction),
+            is_active = COALESCE($9, is_active),
+            sort_order = COALESCE($10, sort_order),
+            prompt_verified_at = CASE
+              WHEN $3 IS NOT NULL OR $5 IS NOT NULL OR $6 IS NOT NULL OR $7 IS NOT NULL OR $8 IS NOT NULL
+                THEN NULL ELSE prompt_verified_at END,
+            prompt_verified_by = CASE
+              WHEN $3 IS NOT NULL OR $5 IS NOT NULL OR $6 IS NOT NULL OR $7 IS NOT NULL OR $8 IS NOT NULL
+                THEN NULL ELSE prompt_verified_by END,
+            prompt_verified_hash = CASE
+              WHEN $3 IS NOT NULL OR $5 IS NOT NULL OR $6 IS NOT NULL OR $7 IS NOT NULL OR $8 IS NOT NULL
+                THEN NULL ELSE prompt_verified_hash END,
+            updated_at = now()
+      WHERE type = $1
+      RETURNING type, label, category, icon_emoji, verification_mode, schema_version, output_schema, ai_prompt_instruction, prompt_verified_at, prompt_verified_by, prompt_verified_hash, is_system, is_active, sort_order, created_at, updated_at`,
+    [
+      req.params.type,
+      params.label || null,
+      params.category || null,
+      params.iconEmoji || null,
+      params.verificationMode || null,
+      params.schemaVersion || null,
+      params.outputSchema ? toJsonbParam(params.outputSchema) : null,
+      params.aiPromptInstruction || null,
+      params.isActive ?? null,
+      params.sortOrder ?? null,
+    ],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'Không tìm thấy loại ảnh.' });
+  await db.query(
+    `INSERT INTO audit_events (actor_type, actor_label, action, payload)
+     VALUES ('ADMIN', 'QC Admin', 'PHOTO_TYPE_UPDATED', $1)`,
+    [toJsonbParam({ type: req.params.type })],
+  );
+  res.json(serializePhotoTypeRow(result.rows[0]));
+});
+
+app.post('/api/admin/photo-types/:type/verify', requireAdmin, async (req, res) => {
+  const existing = await db.query(
+    `SELECT type, ai_prompt_instruction, verification_mode, schema_version, output_schema
+       FROM photo_type_options
+      WHERE type = $1`,
+    [req.params.type],
+  );
+  if (!existing.rowCount) return res.status(404).json({ error: 'Không tìm thấy loại ảnh.' });
+  const row = existing.rows[0];
+  const hash = promptHash(JSON.stringify({
+    aiPromptInstruction: row.ai_prompt_instruction,
+    verificationMode: row.verification_mode,
+    schemaVersion: row.schema_version,
+    outputSchema: row.output_schema,
+  }));
+  const result = await db.query(
+    `UPDATE photo_type_options
+        SET prompt_verified_at = now(),
+            prompt_verified_by = 'QC Admin',
+            prompt_verified_hash = $2,
+            updated_at = now()
+      WHERE type = $1
+      RETURNING type, label, category, icon_emoji, verification_mode, schema_version, output_schema, ai_prompt_instruction, prompt_verified_at, prompt_verified_by, prompt_verified_hash, is_system, is_active, sort_order, created_at, updated_at`,
+    [req.params.type, hash],
+  );
+  await db.query(
+    `INSERT INTO audit_events (actor_type, actor_label, action, payload)
+     VALUES ('ADMIN', 'QC Admin', 'PHOTO_TYPE_PROMPT_VERIFIED', $1)`,
+    [toJsonbParam({ type: req.params.type, promptHash: hash })],
+  );
+  res.json(serializePhotoTypeRow(result.rows[0]));
+});
+
+app.delete('/api/admin/photo-types/:type', requireAdmin, async (req, res) => {
+  const type = req.params.type;
+  const existing = await db.query(`SELECT type, is_system FROM photo_type_options WHERE type = $1`, [type]);
+  if (!existing.rowCount) return res.status(404).json({ error: 'Không tìm thấy loại ảnh.' });
+  if (existing.rows[0].is_system) {
+    return res.status(409).json({ error: 'Loại ảnh hệ thống không thể xóa. Hãy tắt trạng thái Đang dùng để ẩn khỏi mẫu mới.' });
+  }
+
+  const usage = await db.query(
+    `SELECT
+       (SELECT count(*)::int
+          FROM templates
+         WHERE jsonb_path_exists(definition, '$.steps[*].photoSlotConfigs[*] ? (@.photoType == $photoType)', jsonb_build_object('photoType', $1::text))) AS template_count,
+       (SELECT count(*)::int
+          FROM inspection_jobs
+         WHERE jsonb_path_exists(template_snapshot, '$.steps[*].photoSlotConfigs[*] ? (@.photoType == $photoType)', jsonb_build_object('photoType', $1::text))
+            OR jsonb_path_exists(step_results, '$[*].photoSlotsData[*] ? (@.photoType == $photoType)', jsonb_build_object('photoType', $1::text))) AS job_count`,
+    [type],
+  );
+  const templateCount = Number(usage.rows[0]?.template_count || 0);
+  const jobCount = Number(usage.rows[0]?.job_count || 0);
+  if (templateCount > 0 || jobCount > 0) {
+    return res.status(409).json({
+      error: `Loại ảnh đang được dùng trong ${templateCount} mẫu hoặc ${jobCount} lệnh QC. Hãy tắt trạng thái Đang dùng để ẩn khỏi mẫu mới.`,
+    });
+  }
+
+  await db.query(`DELETE FROM photo_type_options WHERE type = $1`, [type]);
+  await db.query(
+    `INSERT INTO audit_events (actor_type, actor_label, action, payload)
+     VALUES ('ADMIN', 'QC Admin', 'PHOTO_TYPE_DELETED', $1)`,
+    [toJsonbParam({ type })],
+  );
+  res.status(204).end();
 });
 
 app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
@@ -268,7 +558,9 @@ app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {
                   jsonb_build_object(
                     'stepId', ep.step_id,
                     'slotIndex', ep.slot_index,
-                    'photoUrl', '/uploads/' || ep.storage_path
+                    'photoUrl', '/uploads/' || ep.storage_path,
+                    'manualOverride', ep.manual_override,
+                    'aiQualityStatus', ep.ai_quality_status
                   )
                   ORDER BY ep.step_id, ep.slot_index, ep.created_at
                 ) AS evidence_photos
@@ -308,7 +600,9 @@ app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
                   jsonb_build_object(
                     'stepId', ep.step_id,
                     'slotIndex', ep.slot_index,
-                    'photoUrl', '/uploads/' || ep.storage_path
+                    'photoUrl', '/uploads/' || ep.storage_path,
+                    'manualOverride', ep.manual_override,
+                    'aiQualityStatus', ep.ai_quality_status
                   )
                   ORDER BY ep.step_id, ep.slot_index, ep.created_at
                 ) AS evidence_photos
@@ -427,7 +721,7 @@ app.get('/api/admin/audit-events', requireAdmin, async (_req, res) => {
   );
   res.json(result.rows.map((row) => ({
     id: String(row.id),
-    jobId: row.job_external_id || '',
+    jobId: row.job_external_id || 'Hệ thống',
     adminName: row.actor_label,
     action: row.action,
     fieldChanged: row.payload?.fieldChanged || row.payload?.field || row.action,
@@ -440,6 +734,8 @@ app.get('/api/admin/audit-events', requireAdmin, async (_req, res) => {
 app.patch('/api/admin/jobs/:jobId/status', requireAdmin, async (req, res) => {
   const { status, adminNotes } = req.body;
   if (!['IN_PROGRESS', 'COMPLETED', 'FAILED'].includes(status)) return res.status(400).json({ error: 'A valid status is required.' });
+  const previous = await db.query(`SELECT id, status, admin_notes FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
+  if (!previous.rowCount) return res.status(404).json({ error: 'Job not found.' });
   const result = await db.query(
     updateJobStatusSql,
     [req.params.jobId, status, adminNotes ?? null],
@@ -448,7 +744,7 @@ app.patch('/api/admin/jobs/:jobId/status', requireAdmin, async (req, res) => {
   await db.query(
     `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
      VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STATUS_UPDATED', $2)`,
-    [result.rows[0].id, toJsonbParam({ fieldChanged: 'Status', newValue: status, adminNotes })],
+    [result.rows[0].id, toJsonbParam({ fieldChanged: 'Status', oldValue: previous.rows[0].status, newValue: status, oldAdminNotes: previous.rows[0].admin_notes || '', adminNotes })],
   );
   res.json(result.rows[0]);
 });
@@ -485,8 +781,24 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin
     return res.status(400).json({ error: 'A valid moderationStatus is required.' });
   }
   const adminReviewNote = String(req.body?.adminReviewNote ?? '');
-  const job = await db.query(`SELECT id, step_results FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
+  const job = await db.query(`SELECT id, step_results, template_snapshot FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
   if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
+
+  if (moderationStatus === 'APPROVED') {
+    const templateStep = Array.isArray(job.rows[0].template_snapshot?.steps)
+      ? job.rows[0].template_snapshot.steps.find((step: any) => step?.stepId === req.params.stepId)
+      : undefined;
+    const requiredPhotoCount = Number(templateStep?.requiredPhotoCount ?? templateStep?.photoSlots?.length ?? 0);
+    const resultStep = Array.isArray(job.rows[0].step_results)
+      ? job.rows[0].step_results.find((step: any) => step?.stepId === req.params.stepId)
+      : undefined;
+    const actualPhotoCount = Array.isArray(resultStep?.photoSlotsData)
+      ? resultStep.photoSlotsData.filter((slot: any) => Boolean(slot?.photoUrl)).length
+      : resultStep?.photoUrl ? 1 : 0;
+    if (actualPhotoCount < requiredPhotoCount) {
+      return res.status(409).json({ error: `Cần đủ ${requiredPhotoCount} ảnh bằng chứng trước khi duyệt bước này.` });
+    }
+  }
 
   const { found, previousStatus, updatedSteps } = moderateStepResults(
     job.rows[0].step_results,
@@ -567,22 +879,25 @@ app.post('/api/admin/jobs/:jobId/sessions', requireAdmin, async (req, res) => {
 app.patch('/api/admin/jobs/:jobId/session/extend', requireAdmin, async (req, res) => {
   const requestedHours = Number(req.body?.hours ?? 1);
   const extensionHours = [1, 2, 4].includes(requestedHours) ? requestedHours : 1;
-  const expiresAt = new Date(Date.now() + extensionHours * 60 * 60 * 1000);
   const job = await db.query('SELECT id FROM inspection_jobs WHERE external_id = $1', [req.params.jobId]);
   if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  const existingSession = await db.query(
+    `SELECT id, expires_at
+       FROM worker_sessions
+      WHERE job_id = $1 AND revoked_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [job.rows[0].id],
+  );
+  if (!existingSession.rowCount) return res.status(404).json({ error: 'Session link has not been created for this job.' });
+  const expiresAt = calculateExtendedSessionExpiry(existingSession.rows[0].expires_at, extensionHours);
   const session = await db.query(
     `UPDATE worker_sessions
         SET expires_at = $2
-      WHERE id = (
-        SELECT id FROM worker_sessions
-         WHERE job_id = $1 AND revoked_at IS NULL
-         ORDER BY created_at DESC
-         LIMIT 1
-      )
+      WHERE id = $1
       RETURNING token_value, created_at, expires_at`,
-    [job.rows[0].id, expiresAt],
+    [existingSession.rows[0].id, expiresAt],
   );
-  if (!session.rowCount) return res.status(404).json({ error: 'Session link has not been created for this job.' });
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'WORKER_SESSION_EXTENDED')`, [job.rows[0].id]);
   res.json({
     token: session.rows[0].token_value || undefined,
@@ -610,58 +925,162 @@ app.post('/api/worker-sessions/:jobId/check-in', workerSessionGuard, async (req,
 app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single('photo'), async (req, res) => {
   const session = res.locals.workerSession;
   if (!req.file) return res.status(400).json({ error: 'A JPEG, PNG, or WEBP photo is required.' });
-  const { stepId, slotIndex } = req.body;
+  const { stepId, slotIndex, source, manualOverride, captureFrame } = req.body;
   if (!stepId || !Number.isInteger(Number(slotIndex))) {
     await fs.unlink(req.file.path);
     return res.status(400).json({ error: 'stepId and integer slotIndex are required.' });
   }
-  const data = await fs.readFile(req.file.path);
-  const sha256 = createHash('sha256').update(data).digest('hex');
-  const photo = await db.query(
-    `INSERT INTO evidence_photos (job_id, session_id, step_id, slot_index, storage_path, original_filename, mime_type, byte_size, sha256)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, step_id, slot_index, mime_type, byte_size, sha256, created_at`,
-    [session.job_id, session.id, stepId, Number(slotIndex), req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256],
-  );
-  const photoUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
-  const { found, updatedSteps } = attachUploadedPhotoToStepResults(session.step_results, {
+  if (source !== 'CAMERA' && source !== 'UPLOAD') {
+    await fs.unlink(req.file.path);
+    return res.status(400).json({ error: 'source must be CAMERA or UPLOAD.' });
+  }
+  const normalizedCaptureFrame = captureFrame || 'RECTANGLE';
+  if (normalizedCaptureFrame !== 'RECTANGLE' && normalizedCaptureFrame !== 'SQUARE') {
+    await fs.unlink(req.file.path);
+    return res.status(400).json({ error: 'captureFrame must be RECTANGLE or SQUARE.' });
+  }
+
+  workerSessionRealtime.publish(req.params.jobId, {
+    type: 'PHOTO_RECEIVED',
     stepId,
     slotIndex: Number(slotIndex),
-    photoUrl,
+    message: `Ảnh đã đến server. ${botName} đang kiểm tra chất lượng...`,
   });
-  if (found) {
-    await db.query(
-      `UPDATE inspection_jobs
-          SET step_results = $1,
-              updated_at = now(),
-              version = version + 1
-        WHERE id = $2`,
-      [toJsonbParam(updatedSteps), session.job_id],
+
+  try {
+    const photoContext = await resolvePhotoPromptContext(session.template_snapshot, stepId, Number(slotIndex));
+    const qualityProfile = await getVeroPromptProfile('PHOTO_QUALITY_GATE');
+    const qualityPrompt = buildQualityPrompt(qualityProfile, photoContext);
+    const inspection = await inspectPhotoFile(req.file.path);
+    const minSharpness = Number(process.env.QC_MIN_SHARPNESS_SCORE || DEFAULT_MIN_SHARPNESS_SCORE);
+    const hasExpectedAspect = normalizedCaptureFrame === 'SQUARE'
+      ? isSquare(inspection.width, inspection.height)
+      : isFourByThree(inspection.width, inspection.height);
+    if (!hasExpectedAspect) {
+      await fs.unlink(req.file.path);
+      return res.status(422).json({ error: `Ảnh cần được căn chỉnh theo khung ${normalizedCaptureFrame === 'SQUARE' ? '1:1' : '4:3'} trước khi tải lên.` });
+    }
+    if (inspection.sharpnessScore < minSharpness) {
+      await fs.unlink(req.file.path);
+      return res.status(422).json({ error: 'Ảnh bị mờ hoặc thiếu chi tiết. Vui lòng căn và chụp lại.', sharpnessScore: inspection.sharpnessScore });
+    }
+
+    const aiQuality = await validatePhotoWithAi(req.file.path, req.file.mimetype, qualityPrompt);
+    const isManualOverride = manualOverride === 'true';
+    if (aiQuality.status === 'REJECTED') {
+      await fs.unlink(req.file.path);
+      await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, 'PHOTO_QUALITY_REJECTED', $3)`, [session.job_id, session.worker_name || 'Worker', toJsonbParam({ stepId, slotIndex: Number(slotIndex), source, reason: aiQuality.message })]);
+      return res.status(422).json({ error: aiQuality.message, qualityStatus: 'REJECTED' });
+    }
+    if (aiQuality.status === 'UNAVAILABLE' && !isManualOverride) {
+      await fs.unlink(req.file.path);
+      return res.status(503).json({ error: `${botName} chưa thể kiểm tra ảnh. Công nhân có thể căn lại ảnh và xác nhận tải thủ công.`, qualityStatus: 'UNAVAILABLE', qualityMessage: aiQuality.message, manualOverrideAvailable: true });
+    }
+
+    const data = await fs.readFile(req.file.path);
+    const sha256 = createHash('sha256').update(data).digest('hex');
+    const photo = await db.query(
+      `INSERT INTO evidence_photos (job_id, session_id, step_id, slot_index, storage_path, original_filename, mime_type, byte_size, sha256, capture_source, crop_ratio, sharpness_score, ai_quality_status, ai_quality_message, manual_override, photo_type, photo_label, photo_prompt_instruction, quality_prompt_revision, quality_prompt_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id, step_id, slot_index, mime_type, byte_size, sha256, created_at, manual_override, ai_quality_status`,
+      [session.job_id, session.id, stepId, Number(slotIndex), req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256, source, normalizedCaptureFrame === 'SQUARE' ? 1 : 4 / 3, inspection.sharpnessScore, aiQuality.status, aiQuality.message, aiQuality.status === 'UNAVAILABLE' && isManualOverride, photoContext.photoType, photoContext.photoLabel, photoContext.photoInstruction, qualityProfile.revision, promptHash(qualityPrompt)],
     );
+    await db.query(
+      `UPDATE evidence_photos
+          SET photo_verification_mode = $2,
+              photo_schema_version = $3,
+              photo_output_schema = $4,
+              quality_reason_code = $5,
+              quality_result_json = $6
+        WHERE id = $1`,
+      [photo.rows[0].id, photoContext.verificationMode, photoContext.schemaVersion, toJsonbParam(photoContext.outputSchema), aiQuality.reasonCode, aiQuality.resultJson ? toJsonbParam(aiQuality.resultJson) : null],
+    );
+    const photoUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
+    const { found, updatedSteps } = attachUploadedPhotoToStepResults(session.step_results, {
+      stepId,
+      slotIndex: Number(slotIndex),
+      photoUrl,
+      manualOverride: photo.rows[0].manual_override,
+      aiQualityStatus: photo.rows[0].ai_quality_status,
+    });
+    if (found) {
+      await db.query(
+        `UPDATE inspection_jobs
+            SET step_results = $1,
+                updated_at = now(),
+                version = version + 1
+          WHERE id = $2`,
+        [toJsonbParam(updatedSteps), session.job_id],
+      );
+    }
+    await enqueuePhotoProcessing(photo.rows[0].id);
+    const action = photo.rows[0].manual_override ? 'PHOTO_UPLOADED_MANUAL_OVERRIDE' : 'PHOTO_UPLOADED';
+    await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, $3, $4)`, [session.job_id, session.worker_name || 'Worker', action, toJsonbParam({ photoId: photo.rows[0].id, stepId, slotIndex: Number(slotIndex), source, sharpnessScore: inspection.sharpnessScore, aiQualityStatus: aiQuality.status, aiQualityMessage: aiQuality.message })]);
+    workerSessionRealtime.publish(req.params.jobId, {
+      type: 'PHOTO_SAVED',
+      photoId: photo.rows[0].id,
+      stepId,
+      slotIndex: Number(slotIndex),
+      photoUrl,
+      manualOverride: photo.rows[0].manual_override,
+      aiQualityStatus: photo.rows[0].ai_quality_status,
+      message: 'Ảnh đã được lưu trên server.',
+    });
+    res.status(201).json({
+      ...photo.rows[0],
+      photoUrl,
+      manualOverride: photo.rows[0].manual_override,
+      qualityStatus: photo.rows[0].ai_quality_status,
+    });
+  } catch (error) {
+    await fs.unlink(req.file.path).catch(() => undefined);
+    throw error;
   }
-  await enqueuePhotoProcessing(photo.rows[0].id);
-  await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, 'PHOTO_UPLOADED', $3)`, [session.job_id, session.worker_name || 'Worker', toJsonbParam({ photoId: photo.rows[0].id, stepId })]);
-  res.status(201).json({ ...photo.rows[0], photoUrl });
 });
 
 app.post('/api/worker-sessions/:jobId/photos/:photoId/analyze', workerSessionGuard, async (req, res) => {
   const session = res.locals.workerSession;
-  const detectType = req.body?.detectType;
-  if (!['IMEI_SERIAL', 'OCR_TEXT', 'COLOR_SCREEN', 'GENERAL'].includes(detectType)) {
-    return res.status(400).json({ error: 'A valid detectType is required.' });
-  }
-  const photo = await db.query(`SELECT id, sha256 FROM evidence_photos WHERE id = $1 AND job_id = $2`, [req.params.photoId, session.job_id]);
+  const photo = await db.query(`SELECT id, sha256, step_id, slot_index, photo_type, photo_label, photo_prompt_instruction, photo_verification_mode, photo_schema_version, photo_output_schema FROM evidence_photos WHERE id = $1 AND job_id = $2`, [req.params.photoId, session.job_id]);
   if (!photo.rowCount) return res.status(404).json({ error: 'Photo not found.' });
+  const verificationMode = normalizeVerificationMode(photo.rows[0].photo_verification_mode);
+  const schemaVersion = normalizeSchemaVersion(photo.rows[0].photo_schema_version);
+  const outputSchema = normalizeOutputSchema(photo.rows[0].photo_output_schema || defaultOutputSchemaForMode(verificationMode));
+  const detectType = mapVerificationModeToDetectType(verificationMode);
   const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const existing = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = 'v1'`, [photo.rows[0].sha256, detectType, geminiModel]);
-  if (existing.rowCount) return res.status(200).json(existing.rows[0]);
+  const analysisProfile = await getVeroPromptProfile('PHOTO_ANALYSIS');
+  const analysisPrompt = buildAnalysisPrompt(analysisProfile, {
+    type: photo.rows[0].photo_type || 'GENERAL_OTHER',
+    label: photo.rows[0].photo_label || 'Ảnh kiểm định',
+    verificationMode,
+    schemaVersion,
+    outputSchema,
+    aiPromptInstruction: photo.rows[0].photo_prompt_instruction || '',
+  }, {
+    photoType: photo.rows[0].photo_type,
+    photoLabel: photo.rows[0].photo_label,
+    photoInstruction: photo.rows[0].photo_prompt_instruction,
+  });
+  const analysisPromptHash = promptHash(analysisPrompt);
+  const existing = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = $4`, [photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash]);
+  if (existing.rowCount) return res.status(200).json(serializeAnalysisRow(existing.rows[0]));
   try {
-    const analysis = await db.query(`INSERT INTO gemini_analyses (photo_id, source_sha256, detect_type, model) VALUES ($1, $2, $3, $4) RETURNING *`, [photo.rows[0].id, photo.rows[0].sha256, detectType, geminiModel]);
+    const analysis = await db.query(
+      `INSERT INTO gemini_analyses (photo_id, source_sha256, detect_type, model, prompt_version, prompt_profile_key, prompt_revision, prompt_instruction, prompt_hash, photo_type, photo_label, photo_prompt_instruction, verification_mode, schema_version, output_schema, validation_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'PENDING') RETURNING *`,
+      [photo.rows[0].id, photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash, 'PHOTO_ANALYSIS', analysisProfile.revision, analysisPrompt, analysisPromptHash, photo.rows[0].photo_type, photo.rows[0].photo_label, photo.rows[0].photo_prompt_instruction, verificationMode, schemaVersion, toJsonbParam(outputSchema)],
+    );
     await enqueueGeminiAnalysis(analysis.rows[0].id, photo.rows[0].id);
-    res.status(202).json(analysis.rows[0]);
+    workerSessionRealtime.publish(req.params.jobId, {
+      type: 'ANALYSIS_QUEUED',
+      photoId: photo.rows[0].id,
+      stepId: photo.rows[0].step_id,
+      slotIndex: Number(photo.rows[0].slot_index),
+      message: `${botName} đã nhận tác vụ phân tích ảnh.`,
+    });
+    res.status(202).json(serializeAnalysisRow(analysis.rows[0]));
   } catch (error: any) {
     if (error?.code !== '23505') throw error;
-    const concurrent = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = 'v1'`, [photo.rows[0].sha256, detectType, geminiModel]);
-    res.status(200).json(concurrent.rows[0]);
+    const concurrent = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = $4`, [photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash]);
+    res.status(200).json(serializeAnalysisRow(concurrent.rows[0]));
   }
 });
 
@@ -669,7 +1088,7 @@ app.get('/api/worker-sessions/:jobId/analyses/:analysisId', workerSessionGuard, 
   const session = res.locals.workerSession;
   const analysis = await db.query(`SELECT a.* FROM gemini_analyses a JOIN evidence_photos p ON p.id = a.photo_id WHERE a.id = $1 AND p.job_id = $2`, [req.params.analysisId, session.job_id]);
   if (!analysis.rowCount) return res.status(404).json({ error: 'Analysis not found.' });
-  res.json(analysis.rows[0]);
+  res.json(serializeAnalysisRow(analysis.rows[0]));
 });
 
 app.post('/api/worker-sessions/:jobId/draft', workerSessionGuard, async (req, res) => {
@@ -755,4 +1174,35 @@ app.use((error: any, _req: Request, res: Response, _next: NextFunction) => {
   res.status(error instanceof multer.MulterError ? 400 : 500).json({ error: error.message || 'Internal server error.' });
 });
 
-app.listen(port, () => console.log(`QC API listening on ${port}`));
+const httpServer = createServer(app);
+const workerSessionWebSocket = new WebSocketServer({ noServer: true });
+
+httpServer.on('upgrade', (request, socket, head) => {
+  const requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+  const match = requestUrl.pathname.match(/^\/api\/worker-sessions\/([^/]+)\/events$/);
+  if (!match) {
+    socket.destroy();
+    return;
+  }
+
+  void (async () => {
+    const jobId = decodeURIComponent(match[1]);
+    const token = requestUrl.searchParams.get('token') || '';
+    const session = token && await getSession(jobId, token);
+    if (!session || new Date(session.expires_at).getTime() <= Date.now()) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    workerSessionWebSocket.handleUpgrade(request, socket, head, (webSocket) => {
+      workerSessionRealtime.add(jobId, webSocket);
+      webSocket.send(JSON.stringify({ type: 'READY' }));
+    });
+  })().catch((error) => {
+    console.error('Worker session WebSocket upgrade failed:', error);
+    socket.destroy();
+  });
+});
+
+httpServer.listen(port, () => console.log(`QC API listening on ${port}`));

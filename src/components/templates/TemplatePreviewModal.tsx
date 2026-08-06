@@ -11,10 +11,13 @@ import {
   Upload,
   Info,
   Check,
-  RotateCcw
+  RotateCcw,
+  Monitor,
+  Smartphone
 } from 'lucide-react';
 import { ChecklistTemplate, InspectionStep } from '../../types/qc';
 import { detectDataFromPhoto } from '../../services/aiDetectionService';
+import { getPhotoTypeInfo } from '../../constants/photoTypes';
 
 interface TemplatePreviewModalProps {
   isOpen: boolean;
@@ -47,12 +50,16 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
   template
 }) => {
   const [stepStates, setStepStates] = useState<Record<string, StepPreviewState>>({});
+  const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop');
+  const isMobileViewport = viewport === 'mobile';
 
   useEffect(() => {
     if (template) {
       const initial: Record<string, StepPreviewState> = {};
       template.steps.forEach((step) => {
-        const slots = step.photoSlots || Array.from({ length: step.requiredPhotoCount || 1 }, (_, i) => `Slot ${i + 1}`);
+        const slots = step.photoSlotConfigs?.length
+          ? step.photoSlotConfigs.map((slot) => slot.label)
+          : step.photoSlots || Array.from({ length: step.requiredPhotoCount || 1 }, (_, i) => `Slot ${i + 1}`);
         initial[step.stepId] = {
           status: 'PENDING',
           photos: slots.map(slotName => ({ slotName, url: undefined })),
@@ -77,7 +84,16 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
 
   if (!isOpen || !template) return null;
 
-  const handleSetStatus = (stepId: string, status: 'PASS' | 'FAIL') => {
+  const canCompleteStep = (step: InspectionStep) => {
+    const state = stepStates[step.stepId];
+    const photoRequired = step.inputType !== 'TEXT' && (step.requiredPhotoCount ?? step.photoSlotConfigs?.length ?? step.photoSlots?.length ?? 0) > 0;
+    const textRequired = (step.inputType === 'TEXT' || step.inputType === 'PHOTO_AND_TEXT') && Boolean(step.isRequiredText);
+    return (!photoRequired || state?.photos.every((photo) => photo.url)) && (!textRequired || Boolean(state?.textValue.trim()));
+  };
+
+  const handleSetStatus = (step: InspectionStep, status: 'PASS' | 'FAIL') => {
+    if (!canCompleteStep(step)) return;
+    const stepId = step.stepId;
     setStepStates(prev => ({
       ...prev,
       [stepId]: { ...prev[stepId], status }
@@ -154,40 +170,47 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
       }}
     >
       <div
-        className="bg-slate-50 rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden my-auto cursor-default"
+        className={`bg-slate-50 rounded-2xl shadow-2xl border border-slate-200 w-full min-w-0 max-h-[92vh] flex flex-col overflow-hidden my-auto cursor-default transition-[max-width] duration-300 ${viewport === 'mobile' ? 'max-w-[390px]' : 'max-w-4xl'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header Bar */}
-        <div className="bg-slate-900 text-white p-5 flex items-center justify-between shrink-0 border-b border-slate-800">
-          <div className="flex items-center gap-3">
+        <div className={`bg-slate-900 text-white flex justify-between gap-3 shrink-0 border-b border-slate-800 ${isMobileViewport ? 'p-4 items-start' : 'p-5 items-center'}`}>
+          <div className="flex min-w-0 items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600/30 border border-blue-400/40 flex items-center justify-center text-blue-400">
               <Eye className="w-5 h-5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-mono font-bold bg-blue-600 px-2 py-0.5 rounded text-white">
-                  MÔ PHỎNG CÔNG NHÂN
+                  PREVIEW WORKER · DEMO
                 </span>
-                <span className="text-xs text-slate-400 font-mono">v{template.version}</span>
+                <span className="text-xs text-slate-400 font-mono">{isMobileViewport ? 'Mobile 390px' : 'Desktop'} · v{template.version}</span>
               </div>
-              <h2 className="text-base font-bold text-white mt-0.5">{template.title}</h2>
+              <h2 className="mt-0.5 break-words text-base font-bold text-white">{template.title}</h2>
             </div>
           </div>
 
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="flex rounded-lg bg-slate-800 p-1" aria-label="Chế độ xem preview">
+              <button type="button" onClick={() => setViewport('desktop')} className={`p-1.5 rounded-md ${viewport === 'desktop' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Xem desktop"><Monitor className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setViewport('mobile')} className={`p-1.5 rounded-md ${viewport === 'mobile' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`} title="Xem mobile"><Smartphone className="w-4 h-4" /></button>
+            </div>
           <button
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
+          </div>
         </div>
 
         {/* Instructions & Progress Banner */}
         <div className="bg-white border-b border-slate-200 p-4 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-            <div className="flex items-center gap-2 text-slate-600 font-medium">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-900">Dữ liệu, ảnh và kết quả Vero dưới đây chỉ để mô phỏng trải nghiệm Worker; không được lưu vào lệnh QC.</div>
+          <div className={`flex ${isMobileViewport ? 'flex-col' : 'flex-col sm:flex-row sm:items-center'} justify-between gap-2 text-xs`}>
+            <div className="flex min-w-0 items-center gap-2 text-slate-600 font-medium">
               <Info className="w-4 h-4 text-blue-600 shrink-0" />
-              <span>Sản phẩm: <strong>{template.productName}</strong> ({template.productCode})</span>
+              <span className="min-w-0 break-words">Sản phẩm: <strong>{template.productName}</strong> ({template.productCode})</span>
             </div>
             <div className="font-bold text-slate-800">
               Tiến độ kiểm thử: <span className="text-blue-600">{completedCount}/{totalCount} bước</span> ({progressPercent}%)
@@ -203,7 +226,7 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
         </div>
 
         {/* Steps Scrollable Area */}
-        <div className="p-5 overflow-y-auto space-y-5 flex-1">
+        <div className={`min-w-0 overflow-y-auto space-y-5 flex-1 ${isMobileViewport ? 'p-4' : 'p-5'}`}>
           {template.steps.map((step, index) => {
             const state = stepStates[step.stepId] || {
               status: 'PENDING',
@@ -213,7 +236,8 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
               isDetecting: false
             };
 
-            const slots = step.photoSlots || Array.from({ length: step.requiredPhotoCount || 1 }, (_, i) => `Slot ${i + 1}`);
+            const slotConfigs = step.photoSlotConfigs?.length ? step.photoSlotConfigs : (step.photoSlots || Array.from({ length: step.requiredPhotoCount || 1 }, (_, i) => `Slot ${i + 1}`)).map((label, slotIndex) => ({ slotIndex: slotIndex + 1, label, photoType: 'GENERAL_OTHER', captureFrame: 'RECTANGLE' as const }));
+            const slots = slotConfigs.map((slot) => slot.label);
 
             return (
               <div
@@ -226,11 +250,11 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
               >
                 {/* Step Title Header */}
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex min-w-0 items-center gap-2.5">
                     <span className="font-mono font-bold text-xs bg-slate-900 text-white px-2.5 py-1 rounded-md">
                       {step.stepId}
                     </span>
-                    <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                    <h3 className="min-w-0 break-words font-bold text-sm sm:text-base text-slate-900">
                       {step.title}
                     </h3>
                   </div>
@@ -262,15 +286,18 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
                       <span>Thu thập ảnh kiểm định ({slots.length} slots):</span>
                     </label>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                      {slots.map((slotName, sIdx) => {
+                    <div className={`grid gap-2 ${isMobileViewport ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-6'}`}>
+                      {slotConfigs.map((slot, sIdx) => {
+                        const slotName = slot.label;
                         const slotPhoto = state.photos[sIdx]?.url;
+                        const photoType = getPhotoTypeInfo(slot.photoType);
 
                         return (
                           <div key={sIdx} className="space-y-1">
                             <div className="text-[10px] font-bold text-slate-600 truncate" title={slotName}>
                               {slotName}
                             </div>
+                            <div className="flex items-center gap-1 text-[9px] text-blue-700"><span>{photoType.iconEmoji}</span><span className="truncate">{photoType.label}</span><span className="ml-auto text-slate-400">{slot.captureFrame === 'SQUARE' ? '1:1' : '4:3'}</span></div>
 
                             {slotPhoto ? (
                               <div className="relative group rounded-lg overflow-hidden border border-slate-300 aspect-square bg-slate-100">
@@ -323,13 +350,13 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
                   </div>
                 )}
 
-                {/* AI Detection Feature Trigger */}
+                {/* Vero detection feature trigger */}
                 {step.enableAiDetection && (
-                  <div className="bg-purple-50 p-3 rounded-xl border border-purple-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className={`bg-purple-50 p-3 rounded-xl border border-purple-200 flex flex-col justify-between gap-3 ${isMobileViewport ? '' : 'sm:flex-row sm:items-center'}`}>
                     <div className="text-xs text-purple-900">
                       <div className="font-bold flex items-center gap-1.5">
                         <Sparkles className="w-4 h-4 text-purple-600" />
-                        <span>AI Gemini Auto-Detect Dữ Liệu Từ Ảnh ({step.aiDetectType || 'IMEI'})</span>
+                        <span>Vero tự nhận dữ liệu từ ảnh ({step.aiDetectType || 'IMEI'})</span>
                       </div>
                       <p className="text-[11px] text-purple-700 mt-0.5">
                         Tự động đọc mã IMEI, OCR chữ hoặc phân tích màn hình sắc xuất từ ảnh đã chụp.
@@ -340,29 +367,29 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
                       type="button"
                       onClick={() => handleRunAiDetect(step)}
                       disabled={state.isDetecting}
-                      className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto"
+                      className={`px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-1.5 shrink-0 ${isMobileViewport ? 'w-full' : 'self-start sm:self-auto'}`}
                     >
                       {state.isDetecting ? (
                         <>
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Đang AI Quét...</span>
+                          <span>Vero đang quét...</span>
                         </>
                       ) : (
                         <>
                           <Sparkles className="w-3.5 h-3.5" />
-                          <span>Chạy AI Detect Ngay</span>
+                          <span>Yêu cầu Vero kiểm tra</span>
                         </>
                       )}
                     </button>
                   </div>
                 )}
 
-                {/* AI Detected Result Display */}
+                {/* Vero detected result display */}
                 {state.aiDetectedValue && (
                   <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs space-y-1">
                     <div className="font-bold text-emerald-900 flex items-center gap-1">
                       <Check className="w-4 h-4 text-emerald-600" />
-                      <span>Kết quả AI đã trích xuất:</span>
+                      <span>Kết quả Vero đã trích xuất:</span>
                     </div>
                     <div className="font-mono font-bold text-emerald-950 bg-white p-2 rounded border border-emerald-200">
                       {state.aiDetectedValue}
@@ -371,7 +398,7 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
                 )}
 
                 {/* Status & Worker Notes Action Controls */}
-                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className={`pt-2 border-t border-slate-100 flex flex-col items-stretch justify-between gap-3 ${isMobileViewport ? '' : 'sm:flex-row sm:items-center'}`}>
                   {/* Notes input */}
                   <input
                     type="text"
@@ -388,11 +415,12 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
                   />
 
                   {/* Pass / Fail Toggle */}
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className={`shrink-0 gap-2 ${isMobileViewport ? 'grid grid-cols-2' : 'flex items-center'}`}>
                     <button
                       type="button"
-                      onClick={() => handleSetStatus(step.stepId, 'PASS')}
-                      className={`px-4 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all ${
+                      onClick={() => handleSetStatus(step, 'PASS')}
+                      disabled={!canCompleteStep(step)}
+                      className={`min-w-0 px-2 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                         state.status === 'PASS'
                           ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
                           : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
@@ -404,8 +432,9 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handleSetStatus(step.stepId, 'FAIL')}
-                      className={`px-4 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-all ${
+                      onClick={() => handleSetStatus(step, 'FAIL')}
+                      disabled={!canCompleteStep(step)}
+                      className={`min-w-0 px-2 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
                         state.status === 'FAIL'
                           ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
                           : 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
@@ -422,14 +451,14 @@ export const TemplatePreviewModal: React.FC<TemplatePreviewModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="bg-white border-t border-slate-200 p-4 flex items-center justify-between shrink-0">
+        <div className={`bg-white border-t border-slate-200 p-4 flex justify-between gap-3 shrink-0 ${isMobileViewport ? 'flex-col items-stretch' : 'items-center'}`}>
           <div className="text-xs text-slate-500 font-medium">
             Tất cả dữ liệu nhập trong Preview này chỉ nhằm mục đích thử nghiệm giao diện.
           </div>
 
           <button
             onClick={onClose}
-            className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-md transition-colors"
+            className={`px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-md transition-colors ${isMobileViewport ? 'w-full' : ''}`}
           >
             Đóng Xem Trước
           </button>

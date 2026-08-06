@@ -92,14 +92,14 @@ export const AuditLogsView: React.FC = () => {
                       </div>
                     </td>
                     <td className="py-3 px-4 font-mono font-bold text-blue-700">
-                      {log.jobId}
+                      {log.jobId === 'Hệ thống' ? <span className="font-sans text-[11px] text-slate-500">Hệ thống / Không áp dụng</span> : log.jobId}
                     </td>
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-800">{log.action}</div>
                       <div className="text-[10px] text-slate-400">Trường: {log.fieldChanged}</div>
                     </td>
                     <td className="py-3 px-4 text-slate-500 max-w-[200px] truncate italic bg-slate-50/50">
-                      {log.oldValue || '(Gốc)'}
+                      {log.oldValue || '— Không có dữ liệu trước'}
                     </td>
                     <td className="py-3 px-4 text-emerald-800 font-medium max-w-[200px] truncate bg-emerald-50/30">
                       {log.newValue}

@@ -1,184 +1,258 @@
-import React, { useState } from 'react';
-import { KeyRound, Building2, FileText, Check, Image as ImageIcon, Sliders, Sparkles, HardDrive, Plus, X, RotateCcw, Trash2, Edit2, Camera } from 'lucide-react';
-import { getAdminApiKey, setAdminApiKey } from '../services/adminApi';
-import { loadSystemSettings, saveSystemSettings } from '../services/systemSettings';
-import { loadPhotoTypeOptions, savePhotoTypeOptions, resetPhotoTypeOptions, PhotoTypeOption } from '../constants/photoTypes';
-import { SystemImageConfig } from '../types/qc';
+import React, { useEffect, useMemo, useState } from 'react';
+import { KeyRound, Building2, FileText, Check, Camera, Search, Plus, Save, Edit3, Eye, EyeOff, Trash2, Bot, ShieldCheck } from 'lucide-react';
+import { PhotoTypeOption } from '../constants/photoTypes';
+import { SavePhotoTypePayload, VeroPromptProfile, adminApi, getAdminApiKey, setAdminApiKey } from '../services/adminApi';
 
 interface SettingsViewProps {
   onAuthUpdated?: () => void;
 }
 
-const AVAILABLE_EXTENSIONS = [
-  { id: 'png', label: 'PNG (.png)', desc: 'Ảnh trong suốt, chất lượng đồ họa cao' },
-  { id: 'jpg', label: 'JPG (.jpg)', desc: 'Định dạng chụp ảnh phổ biến nhất' },
-  { id: 'jpeg', label: 'JPEG (.jpeg)', desc: 'Định dạng chuẩn camera công nghiệp' },
-  { id: 'webp', label: 'WEBP (.webp)', desc: 'Định dạng web hiện đại nén nhẹ' },
-  { id: 'heic', label: 'HEIC (.heic)', desc: 'Ảnh định dạng cao từ iOS/iPhone' },
-  { id: 'bmp', label: 'BMP (.bmp)', desc: 'Ảnh bitmap đồ họa chưa nén' },
-  { id: 'svg', label: 'SVG (.svg)', desc: 'Đồ họa dạng vector' },
-];
+const CATEGORY_LABELS: Record<PhotoTypeOption['category'], string> = {
+  VISUAL: 'Ngoại quan',
+  ANIMATION: 'Khởi động',
+  IMEI: 'IMEI / thông số',
+  CAMERA: 'Camera / mic',
+  BLUETOOTH: 'Bluetooth',
+  MMI: 'Màn hình MMI',
+  OTHER: 'Khác',
+};
 
-const CATEGORY_LABELS: Record<PhotoTypeOption['category'], { label: string; color: string }> = {
-  VISUAL: { label: 'Ngoại quan', color: 'bg-blue-100 text-blue-800 border-blue-200' },
-  ANIMATION: { label: 'Khởi động', color: 'bg-amber-100 text-amber-800 border-amber-200' },
-  IMEI: { label: 'IMEI & Tem', color: 'bg-purple-100 text-purple-800 border-purple-200' },
-  CAMERA: { label: 'Camera & Mic', color: 'bg-pink-100 text-pink-800 border-pink-200' },
-  BLUETOOTH: { label: 'Bluetooth', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-  MMI: { label: 'Màn hình MMI', color: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-  OTHER: { label: 'Khác', color: 'bg-slate-100 text-slate-800 border-slate-200' },
+const CATEGORY_OPTIONS = Object.entries(CATEGORY_LABELS) as Array<[PhotoTypeOption['category'], string]>;
+const VERIFICATION_MODE_LABELS: Record<NonNullable<PhotoTypeOption['verificationMode']>, string> = {
+  OCR_ID: 'OCR mã / IMEI',
+  OCR_TEXT: 'OCR văn bản',
+  SCREEN_STATE: 'Trạng thái màn hình',
+  VISUAL: 'Quan sát ngoại quan',
+  MEASUREMENT: 'Đo lường',
+  EVIDENCE_ONLY: 'Chỉ lưu bằng chứng',
+};
+const VERIFICATION_MODE_OPTIONS = Object.entries(VERIFICATION_MODE_LABELS) as Array<[NonNullable<PhotoTypeOption['verificationMode']>, string]>;
+
+const EMPTY_PHOTO_TYPE_FORM: SavePhotoTypePayload = {
+  type: '',
+  label: '',
+  category: 'OTHER',
+  iconEmoji: '📷',
+  verificationMode: 'EVIDENCE_ONLY',
+  schemaVersion: '1.0',
+  outputSchema: { type: 'object', required: [], properties: {} },
+  aiPromptInstruction: '',
+  isActive: true,
+  sortOrder: 999,
 };
 
 export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => {
-  const initialSettings = loadSystemSettings();
-
-  const [factoryName, setFactoryName] = useState(initialSettings.factoryName);
-  const [department, setDepartment] = useState(initialSettings.department);
-  const [defaultWidth, setDefaultWidth] = useState(initialSettings.defaultWidth);
-  const [defaultHeight, setDefaultHeight] = useState(initialSettings.defaultHeight);
-  const [autoRefreshInterval, setAutoRefreshInterval] = useState(initialSettings.autoRefreshInterval);
+  const [factoryName, setFactoryName] = useState('NHÀ MÁY SẢN XUẤT ĐIỆN TỬ & THIẾT BỊ THÔNG MINH');
+  const [department, setDepartment] = useState('BỘ PHẬN PHÁT TRIỂN & QUẢN LÝ CHẤT LƯỢNG (QA/QC)');
+  const [defaultWidth, setDefaultWidth] = useState(60);
+  const [defaultHeight, setDefaultHeight] = useState(45);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(30);
   const [adminApiKeyValue, setAdminApiKeyValue] = useState(() => getAdminApiKey());
-
-  // Image Types & Formats Config State
-  const [allowedTypes, setAllowedTypes] = useState<string[]>(initialSettings.imageConfig.allowedTypes);
-  const [customTypeInput, setCustomTypeInput] = useState('');
-  const [exportFormat, setExportFormat] = useState<SystemImageConfig['exportFormat']>(initialSettings.imageConfig.exportFormat);
-  const [maxSizeMb, setMaxSizeMb] = useState(initialSettings.imageConfig.maxSizeMb);
-  const [compressionQuality, setCompressionQuality] = useState<SystemImageConfig['compressionQuality']>(initialSettings.imageConfig.compressionQuality);
-  const [autoOptimizeForDocx, setAutoOptimizeForDocx] = useState(initialSettings.imageConfig.autoOptimizeForDocx);
-
-  // SLOT PHOTO TYPES CUSTOMIZATION STATE
-  const [photoTypeOptions, setPhotoTypeOptions] = useState<PhotoTypeOption[]>(() => loadPhotoTypeOptions());
-  const [filterCategory, setFilterCategory] = useState<string>('ALL');
-  const [isAddingPhotoType, setIsAddingPhotoType] = useState(false);
-  const [editingTypeKey, setEditingTypeKey] = useState<string | null>(null);
-
-  // Form State for Adding / Editing Photo Types
-  const [formEmoji, setFormEmoji] = useState('📷');
-  const [formLabel, setFormLabel] = useState('');
-  const [formCategory, setFormCategory] = useState<PhotoTypeOption['category']>('VISUAL');
-  const [formAiPrompt, setFormAiPrompt] = useState('');
-
   const [isSaved, setIsSaved] = useState(false);
-
-  const handleToggleType = (extId: string) => {
-    setAllowedTypes(prev =>
-      prev.includes(extId) ? prev.filter(t => t !== extId) : [...prev, extId]
-    );
-  };
-
-  const handleAddCustomType = () => {
-    const clean = customTypeInput.trim().toLowerCase().replace(/^\./, '');
-    if (clean && !allowedTypes.includes(clean)) {
-      setAllowedTypes(prev => [...prev, clean]);
-      setCustomTypeInput('');
-    }
-  };
-
-  const handleRemoveType = (typeToRemove: string) => {
-    setAllowedTypes(prev => prev.filter(t => t !== typeToRemove));
-  };
-
-  // SLOT PHOTO TYPE HANDLERS
-  const handleOpenAddForm = () => {
-    setEditingTypeKey(null);
-    setFormEmoji('📷');
-    setFormLabel('');
-    setFormCategory('VISUAL');
-    setFormAiPrompt('Phân tích chi tiết hình ảnh kiểm định QC sản phẩm.');
-    setIsAddingPhotoType(true);
-  };
-
-  const handleOpenEditForm = (option: PhotoTypeOption) => {
-    setEditingTypeKey(option.type);
-    setFormEmoji(option.iconEmoji || '📷');
-    setFormLabel(option.label);
-    setFormCategory(option.category);
-    setFormAiPrompt(option.aiPromptInstruction);
-    setIsAddingPhotoType(true);
-  };
-
-  const handleSavePhotoType = () => {
-    if (!formLabel.trim()) return;
-
-    if (editingTypeKey) {
-      // Update existing photo type
-      const updated = photoTypeOptions.map((opt) =>
-        opt.type === editingTypeKey
-          ? {
-              ...opt,
-              label: formLabel.trim(),
-              iconEmoji: formEmoji.trim() || '📷',
-              category: formCategory,
-              aiPromptInstruction: formAiPrompt.trim(),
-            }
-          : opt
-      );
-      setPhotoTypeOptions(updated);
-      savePhotoTypeOptions(updated);
-    } else {
-      // Create new custom photo type
-      const newKey = `CUSTOM_${Date.now()}`;
-      const newOption: PhotoTypeOption = {
-        type: newKey,
-        label: formLabel.trim(),
-        iconEmoji: formEmoji.trim() || '📷',
-        category: formCategory,
-        aiPromptInstruction: formAiPrompt.trim() || 'Phân tích hình ảnh kiểm định sản phẩm.',
-      };
-      const updated = [...photoTypeOptions, newOption];
-      setPhotoTypeOptions(updated);
-      savePhotoTypeOptions(updated);
-    }
-
-    setIsAddingPhotoType(false);
-    setEditingTypeKey(null);
-  };
-
-  const handleDeletePhotoType = (typeKey: string) => {
-    if (photoTypeOptions.length <= 1) return;
-    const updated = photoTypeOptions.filter((opt) => opt.type !== typeKey);
-    setPhotoTypeOptions(updated);
-    savePhotoTypeOptions(updated);
-  };
-
-  const handleResetPhotoTypes = () => {
-    if (window.confirm('Bạn có chắc muốn khôi phục danh sách Loại Ảnh về mặc định ban đầu?')) {
-      const resetList = resetPhotoTypeOptions();
-      setPhotoTypeOptions(resetList);
-      setIsAddingPhotoType(false);
-      setEditingTypeKey(null);
-    }
-  };
-
-  const filteredPhotoTypes = photoTypeOptions.filter((opt) =>
-    filterCategory === 'ALL' ? true : opt.category === filterCategory
-  );
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [configError, setConfigError] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [photoTypes, setPhotoTypes] = useState<PhotoTypeOption[]>([]);
+  const [isLoadingPhotoTypes, setIsLoadingPhotoTypes] = useState(true);
+  const [photoTypeError, setPhotoTypeError] = useState('');
+  const [photoTypeSearch, setPhotoTypeSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<'ALL' | PhotoTypeOption['category']>('ALL');
+  const [isPhotoTypeEditorOpen, setIsPhotoTypeEditorOpen] = useState(false);
+  const [editingType, setEditingType] = useState<string | null>(null);
+  const [draft, setDraft] = useState<SavePhotoTypePayload>(EMPTY_PHOTO_TYPE_FORM);
+  const [isSavingPhotoType, setIsSavingPhotoType] = useState(false);
+  const [veroProfiles, setVeroProfiles] = useState<VeroPromptProfile[]>([]);
+  const [veroDrafts, setVeroDrafts] = useState<Record<string, string>>({});
+  const [isLoadingVeroProfiles, setIsLoadingVeroProfiles] = useState(true);
+  const [veroError, setVeroError] = useState('');
+  const [savingVeroProfile, setSavingVeroProfile] = useState<string | null>(null);
+  const [verifyingVeroProfile, setVerifyingVeroProfile] = useState<string | null>(null);
+  const [verifyingPhotoType, setVerifyingPhotoType] = useState<string | null>(null);
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
+    if (![defaultWidth, defaultHeight, autoRefreshInterval].every((value) => Number.isFinite(value) && value > 0)) {
+      setConfigError('Kích thước ảnh và tần số đồng bộ phải là số lớn hơn 0.');
+      return;
+    }
+    setConfigError('');
     setAdminApiKey(adminApiKeyValue, { persist: true });
-
-    saveSystemSettings({
-      factoryName,
-      department,
-      defaultWidth,
-      defaultHeight,
-      autoRefreshInterval,
-      imageConfig: {
-        allowedTypes,
-        exportFormat,
-        maxSizeMb,
-        compressionQuality,
-        autoOptimizeForDocx,
-      },
-    });
-
-    savePhotoTypeOptions(photoTypeOptions);
-
     onAuthUpdated?.();
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
+  };
+
+  const testApiConnection = async () => {
+    setConnectionStatus('testing');
+    setConfigError('');
+    setAdminApiKey(adminApiKeyValue, { persist: false });
+    try {
+      await adminApi.listJobs();
+      setConnectionStatus('success');
+    } catch (error) {
+      setConnectionStatus('error');
+      setConfigError(error instanceof Error ? error.message : 'Không kết nối được API Server.');
+    }
+  };
+
+  const reloadPhotoTypes = async () => {
+    setIsLoadingPhotoTypes(true);
+    setPhotoTypeError('');
+    try {
+      setPhotoTypes(await adminApi.listPhotoTypes());
+    } catch (error) {
+      setPhotoTypeError(error instanceof Error ? error.message : 'Không tải được danh sách loại ảnh.');
+    } finally {
+      setIsLoadingPhotoTypes(false);
+    }
+  };
+
+  useEffect(() => {
+    void reloadPhotoTypes();
+  }, []);
+
+  const reloadVeroProfiles = async () => {
+    setIsLoadingVeroProfiles(true);
+    setVeroError('');
+    try {
+      const profiles = await adminApi.listVeroPromptProfiles();
+      setVeroProfiles(profiles);
+      setVeroDrafts(Object.fromEntries(profiles.map((item) => [item.profileKey, item.instruction])));
+    } catch (error) {
+      setVeroError(error instanceof Error ? error.message : 'Không tải được cấu hình Vero.');
+    } finally {
+      setIsLoadingVeroProfiles(false);
+    }
+  };
+
+  useEffect(() => {
+    void reloadVeroProfiles();
+  }, []);
+
+  const saveVeroProfile = async (profile: VeroPromptProfile) => {
+    const instruction = veroDrafts[profile.profileKey] || '';
+    setSavingVeroProfile(profile.profileKey);
+    setVeroError('');
+    try {
+      await adminApi.updateVeroPromptProfile(profile.profileKey, instruction);
+      await reloadVeroProfiles();
+    } catch (error) {
+      setVeroError(error instanceof Error ? error.message : 'Không thể xuất bản cấu hình Vero.');
+    } finally {
+      setSavingVeroProfile(null);
+    }
+  };
+
+  const verifyVeroProfile = async (profile: VeroPromptProfile) => {
+    setVerifyingVeroProfile(profile.profileKey);
+    setVeroError('');
+    try {
+      await adminApi.verifyVeroPromptProfile(profile.profileKey);
+      await reloadVeroProfiles();
+    } catch (error) {
+      setVeroError(error instanceof Error ? error.message : 'Không thể xác nhận prompt Vero.');
+    } finally {
+      setVerifyingVeroProfile(null);
+    }
+  };
+
+  const filteredPhotoTypes = useMemo(() => {
+    const keyword = photoTypeSearch.trim().toLowerCase();
+    return photoTypes.filter((item) => {
+      const matchesKeyword = !keyword || item.label.toLowerCase().includes(keyword) || item.type.toLowerCase().includes(keyword);
+      const matchesCategory = categoryFilter === 'ALL' || item.category === categoryFilter;
+      return matchesKeyword && matchesCategory;
+    });
+  }, [categoryFilter, photoTypeSearch, photoTypes]);
+
+  const startCreatePhotoType = () => {
+    setEditingType(null);
+    setIsPhotoTypeEditorOpen(true);
+    setDraft({
+      ...EMPTY_PHOTO_TYPE_FORM,
+      sortOrder: photoTypes.length ? Math.max(...photoTypes.map((item) => item.sortOrder || 0)) + 10 : 10,
+    });
+  };
+
+  const startEditPhotoType = (item: PhotoTypeOption) => {
+    setEditingType(item.type);
+    setIsPhotoTypeEditorOpen(true);
+    setDraft({
+      label: item.label,
+      category: item.category,
+      iconEmoji: item.iconEmoji,
+      verificationMode: item.verificationMode || 'EVIDENCE_ONLY',
+      schemaVersion: item.schemaVersion || '1.0',
+      outputSchema: item.outputSchema || { type: 'object', required: [], properties: {} },
+      aiPromptInstruction: item.aiPromptInstruction,
+      isActive: item.isActive ?? true,
+      sortOrder: item.sortOrder ?? 999,
+    });
+  };
+
+  const closePhotoTypeEditor = () => {
+    setIsPhotoTypeEditorOpen(false);
+    setEditingType(null);
+    setDraft(EMPTY_PHOTO_TYPE_FORM);
+  };
+
+  const handleSavePhotoType = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingPhotoType(true);
+    setPhotoTypeError('');
+    try {
+      if (editingType) {
+        await adminApi.updatePhotoType(editingType, draft);
+      } else {
+        await adminApi.createPhotoType(draft);
+      }
+      closePhotoTypeEditor();
+      await reloadPhotoTypes();
+    } catch (error) {
+      setPhotoTypeError(error instanceof Error ? error.message : 'Không lưu được loại ảnh.');
+    } finally {
+      setIsSavingPhotoType(false);
+    }
+  };
+
+  const handleTogglePhotoType = async (item: PhotoTypeOption) => {
+    setPhotoTypeError('');
+    try {
+      await adminApi.updatePhotoType(item.type, { isActive: !(item.isActive ?? true) });
+      await reloadPhotoTypes();
+    } catch (error) {
+      setPhotoTypeError(error instanceof Error ? error.message : 'Không đổi được trạng thái loại ảnh.');
+    }
+  };
+
+  const handleDeletePhotoType = async (item: PhotoTypeOption) => {
+    if (item.isSystem) {
+      setPhotoTypeError('Loại ảnh hệ thống không thể xóa. Hãy tắt trạng thái Đang dùng để ẩn khỏi mẫu mới.');
+      return;
+    }
+    const ok = window.confirm(`Xóa loại ảnh "${item.label}"? Chỉ nên xóa khi loại này chưa được dùng trong mẫu hoặc lệnh QC cũ.`);
+    if (!ok) return;
+    setPhotoTypeError('');
+    try {
+      await adminApi.deletePhotoType(item.type);
+      if (editingType === item.type) closePhotoTypeEditor();
+      await reloadPhotoTypes();
+    } catch (error) {
+      setPhotoTypeError(error instanceof Error ? error.message : 'Không xóa được loại ảnh.');
+    }
+  };
+
+  const handleVerifyPhotoType = async (item: PhotoTypeOption) => {
+    setVerifyingPhotoType(item.type);
+    setPhotoTypeError('');
+    try {
+      await adminApi.verifyPhotoType(item.type);
+      await reloadPhotoTypes();
+    } catch (error) {
+      setPhotoTypeError(error instanceof Error ? error.message : 'Không thể xác nhận prompt loại ảnh.');
+    } finally {
+      setVerifyingPhotoType(null);
+    }
   };
 
   return (
@@ -186,14 +260,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-          Cấu Hình Hệ Thống & Loại Ảnh Kiểm Định (.docx)
+          Cấu Hình Hệ Thống & Mẫu Xuất Báo Cáo Word
         </h1>
         <p className="text-xs text-slate-500 mt-1">
-          Thiết lập thông tin nhà máy, tùy biến danh sách Loại Ảnh cho Slot, định dạng ảnh xuất báo cáo Word và kết nối API
+          Thiết lập tiêu đề nhà máy, thông số mặc định cho khung ảnh chèn Word và tần số đồng bộ từ xưởng
         </p>
       </div>
 
       <form onSubmit={handleSaveSettings} className="space-y-6">
+        {configError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">{configError}</div>}
         {/* Factory Header Config */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -228,431 +303,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
           </div>
         </div>
 
-        {/* SECTION: CUSTOMIZABLE SLOT PHOTO TYPES (LOẠI ẢNH KHI TẠO SLOT) */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <Camera className="w-4 h-4 text-sky-600" />
-                <span>Cấu Hình Danh Sách Loại Ảnh Khi Tạo Slot Kiểm Định</span>
-              </h2>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Tùy biến danh sách hiển thị ở Menu Dropdown khi chọn Loại Ảnh cho từng Slot chụp ảnh trong Tạo Mẫu Kiểm Tra
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleResetPhotoTypes}
-                className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors flex items-center gap-1.5"
-                title="Khôi phục về 21 loại ảnh mặc định"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Khôi Phục Mặc Định</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleOpenAddForm}
-                className="px-3.5 py-1.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg shadow-sm transition-all flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ Thêm Loại Ảnh Mới</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Form Add / Edit Photo Type Modal/Card */}
-          {isAddingPhotoType && (
-            <div className="bg-sky-50/70 border border-sky-200 p-4 rounded-xl space-y-4 animate-fadeIn">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-sky-900 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-sky-600" />
-                  <span>{editingTypeKey ? 'Chỉnh Sửa Loại Ảnh' : 'Thêm Loại Ảnh Mới Cho Slot'}</span>
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingPhotoType(false)}
-                  className="text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <div className="sm:col-span-1">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Emoji / Biểu tượng
-                  </label>
-                  <input
-                    type="text"
-                    value={formEmoji}
-                    onChange={(e) => setFormEmoji(e.target.value)}
-                    placeholder="📱, 🔍, 🔋..."
-                    className="w-full p-2 text-xs text-center font-bold bg-white border border-slate-300 rounded-lg"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Tên Loại Ảnh (Hiển thị ở Dropdown Slot)
-                  </label>
-                  <input
-                    type="text"
-                    value={formLabel}
-                    onChange={(e) => setFormLabel(e.target.value)}
-                    placeholder="VD: Mặt sau (Mặt lưng / Camera bump), Tem IMEI..."
-                    className="w-full p-2 text-xs font-semibold bg-white border border-slate-300 rounded-lg"
-                  />
-                </div>
-
-                <div className="sm:col-span-1">
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Phân Loại / Danh Mục
-                  </label>
-                  <select
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value as PhotoTypeOption['category'])}
-                    className="w-full p-2 text-xs font-semibold bg-white border border-slate-300 rounded-lg"
-                  >
-                    <option value="VISUAL">Ngoại quan (VISUAL)</option>
-                    <option value="ANIMATION">Khởi động (ANIMATION)</option>
-                    <option value="IMEI">IMEI & Tem (IMEI)</option>
-                    <option value="CAMERA">Camera & Mic (CAMERA)</option>
-                    <option value="BLUETOOTH">Bluetooth (BLUETOOTH)</option>
-                    <option value="MMI">Màn hình MMI (MMI)</option>
-                    <option value="OTHER">Khác (OTHER)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  Chỉ Dẫn AI Vision Prompt (AI Tự Động Nhận Diện)
-                </label>
-                <textarea
-                  rows={2}
-                  value={formAiPrompt}
-                  onChange={(e) => setFormAiPrompt(e.target.value)}
-                  placeholder="Nhập mô tả cho AI phát hiện lỗi, sê-ri hoặc đốm khi công nhân chụp ảnh..."
-                  className="w-full p-2 text-xs bg-white border border-slate-300 rounded-lg"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setIsAddingPhotoType(false)}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-100"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSavePhotoType}
-                  className="px-4 py-1.5 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg shadow-sm"
-                >
-                  Lưu Loại Ảnh
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Filter Categories Bar */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <button
-              type="button"
-              onClick={() => setFilterCategory('ALL')}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
-                filterCategory === 'ALL'
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              Tất Cả ({photoTypeOptions.length})
-            </button>
-            {Object.entries(CATEGORY_LABELS).map(([cat, config]) => {
-              const count = photoTypeOptions.filter((opt) => opt.category === cat).length;
-              return (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => setFilterCategory(cat)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all ${
-                    filterCategory === cat
-                      ? 'bg-sky-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {config.label} ({count})
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Photo Types Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {filteredPhotoTypes.map((opt) => {
-              const catInfo = CATEGORY_LABELS[opt.category] || CATEGORY_LABELS.OTHER;
-              return (
-                <div
-                  key={opt.type}
-                  className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-col justify-between hover:border-slate-300 transition-all space-y-2"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-base shrink-0">{opt.iconEmoji || '📷'}</span>
-                      <span className="font-bold text-xs text-slate-900 truncate" title={opt.label}>
-                        {opt.label}
-                      </span>
-                    </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${catInfo.color}`}>
-                      {catInfo.label}
-                    </span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-500 line-clamp-2 italic bg-white p-2 rounded-lg border border-slate-100">
-                    "{opt.aiPromptInstruction}"
-                  </p>
-
-                  <div className="flex items-center justify-between pt-1 text-[10px]">
-                    <span className="font-mono text-slate-400 truncate max-w-[150px]" title={opt.type}>
-                      ID: {opt.type}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditForm(opt)}
-                        className="p-1 text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded transition-colors"
-                        title="Sửa loại ảnh này"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeletePhotoType(opt.type)}
-                        className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                        title="Xóa loại ảnh"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* IMAGE FILE EXTENSIONS & FORMAT CUSTOMIZATION */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <ImageIcon className="w-4 h-4 text-purple-600" />
-              <span>Cấu Hình Tùy Biến Định Dạng File Ảnh & Tệp Đầu Ra</span>
-            </h2>
-            <span className="text-[11px] font-mono text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-full font-bold">
-              File Extensions
-            </span>
-          </div>
-
-          {/* Section 1: Allowed Image File Types */}
-          <div className="space-y-3">
-            <label className="block text-xs font-bold text-slate-800 flex items-center justify-between">
-              <span>1. Các Loại File Ảnh Chấp Nhận Tải Lên (Allowed Image Extensions)</span>
-              <span className="text-[11px] text-slate-400 font-normal">Đã chọn: {allowedTypes.length} loại</span>
-            </label>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
-              {AVAILABLE_EXTENSIONS.map((ext) => {
-                const isSelected = allowedTypes.includes(ext.id);
-                return (
-                  <button
-                    key={ext.id}
-                    type="button"
-                    onClick={() => handleToggleType(ext.id)}
-                    className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
-                      isSelected
-                        ? 'bg-purple-50/80 border-purple-300 text-purple-900 shadow-sm'
-                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs font-bold">{ext.label}</span>
-                      <span
-                        className={`w-4 h-4 rounded-md flex items-center justify-center text-[10px] ${
-                          isSelected ? 'bg-purple-600 text-white' : 'border border-slate-300 bg-white'
-                        }`}
-                      >
-                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-slate-500 mt-1 line-clamp-1">{ext.desc}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Custom Extension Add Input */}
-            <div className="pt-2 flex items-center gap-2">
-              <div className="relative flex-1 max-w-md">
-                <input
-                  type="text"
-                  value={customTypeInput}
-                  onChange={(e) => setCustomTypeInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddCustomType();
-                    }
-                  }}
-                  placeholder="Thêm đuôi mở rộng khác (VD: tiff, raw, avif)..."
-                  className="w-full pl-3 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleAddCustomType}
-                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Thêm Loại</span>
-              </button>
-            </div>
-
-            {/* Selected Active Extensions Tag Cloud */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-[11px] text-slate-500 font-medium mr-1">Danh sách kích hoạt:</span>
-              {allowedTypes.map((t) => (
-                <span
-                  key={t}
-                  className="text-[11px] font-mono font-bold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-md flex items-center gap-1 border border-purple-200"
-                >
-                  .{t.toUpperCase()}
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveType(t)}
-                    className="hover:text-red-600 transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
-
-          {/* Section 2: Export Image Format Selection */}
-          <div className="pt-3 border-t border-slate-100 space-y-3">
-            <label className="block text-xs font-bold text-slate-800">
-              2. Định Dạng Ảnh Đầu Ra Khi Xuất Báo Cáo Word (.docx)
-            </label>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <button
-                type="button"
-                onClick={() => setExportFormat('AUTO')}
-                className={`p-3.5 rounded-xl border text-left transition-all space-y-1 ${
-                  exportFormat === 'AUTO'
-                    ? 'bg-blue-50 border-blue-400 text-blue-900 ring-2 ring-blue-500/20'
-                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                }`}
-              >
-                <div className="flex items-center justify-between font-bold text-xs">
-                  <span>⚡ Tự Động (AUTO)</span>
-                  {exportFormat === 'AUTO' && <Check className="w-4 h-4 text-blue-600" />}
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Giữ nguyên định dạng ảnh gốc nếu tương thích với MS Word (Khuyên dùng).
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setExportFormat('PNG')}
-                className={`p-3.5 rounded-xl border text-left transition-all space-y-1 ${
-                  exportFormat === 'PNG'
-                    ? 'bg-emerald-50 border-emerald-400 text-emerald-900 ring-2 ring-emerald-500/20'
-                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                }`}
-              >
-                <div className="flex items-center justify-between font-bold text-xs">
-                  <span>🖼️ Chuyển Sang PNG</span>
-                  {exportFormat === 'PNG' && <Check className="w-4 h-4 text-emerald-600" />}
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Chuyển toàn bộ ảnh sang PNG. Tối ưu độ sắc nét, tương thích 100% mọi phiên bản Office.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setExportFormat('JPG')}
-                className={`p-3.5 rounded-xl border text-left transition-all space-y-1 ${
-                  exportFormat === 'JPG'
-                    ? 'bg-amber-50 border-amber-400 text-amber-900 ring-2 ring-amber-500/20'
-                    : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                }`}
-              >
-                <div className="flex items-center justify-between font-bold text-xs">
-                  <span>📷 Chuyển Sang JPG</span>
-                  {exportFormat === 'JPG' && <Check className="w-4 h-4 text-amber-600" />}
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Chuyển sang JPG chuẩn. Tối ưu dung lượng file Word nhẹ, tải & mở nhanh.
-                </p>
-              </button>
-            </div>
-          </div>
-
-          {/* Section 3: Size Limits & Quality */}
-          <div className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Giới Hạn Dung Lượng File Ảnh Tải Lên
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={maxSizeMb}
-                  onChange={(e) => setMaxSizeMb(Number(e.target.value))}
-                  className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg"
-                />
-                <span className="text-xs font-bold text-slate-500">MB</span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Chất Lượng Tối Ưu Nén Ảnh
-              </label>
-              <select
-                value={compressionQuality}
-                onChange={(e) => setCompressionQuality(e.target.value as SystemImageConfig['compressionQuality'])}
-                className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg"
-              >
-                <option value="MEDIUM">MEDIUM - Cân bằng 75% (Khuyên dùng)</option>
-                <option value="HIGH">HIGH - Chất lượng cao 90%</option>
-                <option value="LOW">LOW - Nén sâu 50% (Cho mạng yếu)</option>
-                <option value="ORIGINAL">ORIGINAL - Giữ nguyên 100% gốc</option>
-              </select>
-            </div>
-
-            <div className="flex items-center pt-5">
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={autoOptimizeForDocx}
-                  onChange={(e) => setAutoOptimizeForDocx(e.target.checked)}
-                  className="w-4 h-4 text-purple-600 rounded border-slate-300 focus:ring-purple-500"
-                />
-                <span>Tự động co giãn & tối ưu tỷ lệ khung ảnh chèn ô bảng Word</span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        {/* API Server Connection */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-amber-600" />
@@ -663,16 +313,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
             <label className="block text-xs font-semibold text-slate-700 mb-1">
               Admin API Key cho tester nội bộ
             </label>
-            <input
-              type="password"
-              value={adminApiKeyValue}
-              onChange={(e) => setAdminApiKeyValue(e.target.value)}
-              placeholder="Nhập QC_ADMIN_API_KEY để tải lệnh và xuất URL session"
-              className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="flex gap-2">
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                value={adminApiKeyValue}
+                onChange={(e) => setAdminApiKeyValue(e.target.value)}
+                placeholder="Nhập QC_ADMIN_API_KEY để tải lệnh và xuất URL session"
+                className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              />
+              <button type="button" onClick={() => setShowApiKey((value) => !value)} className="rounded-lg border border-slate-300 px-3 text-slate-600 hover:bg-slate-50" title={showApiKey ? 'Ẩn API key' : 'Hiện API key'}>
+                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+              <button type="button" onClick={() => void testApiConnection()} disabled={connectionStatus === 'testing'} className="whitespace-nowrap rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-700 hover:bg-blue-100 disabled:opacity-60">
+                {connectionStatus === 'testing' ? 'Đang test...' : 'Test kết nối'}
+              </button>
+            </div>
             <p className="text-[11px] text-slate-500 mt-1">
-              Key sẽ được lưu trên trình duyệt của thiết bị này để lần sau không cần đăng nhập lại. Nếu đổi mật khẩu trên VPS, cập nhật lại key ở đây.
+              Key được che mặc định. Chỉ hiển thị khi bạn chủ động bấm biểu tượng mắt; không dùng chức năng lưu key trên máy dùng chung.
             </p>
+            {connectionStatus === 'success' && <p className="mt-1 text-[11px] font-semibold text-emerald-700">Kết nối API Server thành công.</p>}
           </div>
         </div>
 
@@ -691,6 +350,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
               <div className="flex items-center gap-2">
                 <input
                   type="number"
+                  min={1}
                   value={defaultWidth}
                   onChange={(e) => setDefaultWidth(Number(e.target.value))}
                   className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg"
@@ -706,6 +366,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
               <div className="flex items-center gap-2">
                 <input
                   type="number"
+                  min={1}
                   value={defaultHeight}
                   onChange={(e) => setDefaultHeight(Number(e.target.value))}
                   className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg"
@@ -721,6 +382,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
               <div className="flex items-center gap-2">
                 <input
                   type="number"
+                  min={1}
                   value={autoRefreshInterval}
                   onChange={(e) => setAutoRefreshInterval(Number(e.target.value))}
                   className="w-full p-2.5 text-xs bg-slate-50 border border-slate-300 rounded-lg"
@@ -742,7 +404,369 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
           </button>
         </div>
       </form>
+
+      <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-slate-200 bg-slate-50/70">
+          <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Bot className="w-4 h-4 text-indigo-600" />
+            <span>Cấu hình Vero</span>
+          </h2>
+          <p className="text-[11px] text-slate-500 mt-1 max-w-3xl">
+            Quy tắc chung áp dụng cho mọi lần Vero kiểm tra và phân tích ảnh. Khi xuất bản, hệ thống tạo revision mới; kết quả ảnh sau đó sẽ lưu revision và mã kiểm chứng của prompt.
+          </p>
+        </div>
+
+        {veroError && (
+          <div className="mx-6 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
+            {veroError}
+          </div>
+        )}
+
+        <div className="divide-y divide-slate-200">
+          {isLoadingVeroProfiles && <div className="px-6 py-6 text-sm text-slate-500">Đang tải cấu hình Vero...</div>}
+          {!isLoadingVeroProfiles && veroProfiles.map((profile) => {
+            const draft = veroDrafts[profile.profileKey] ?? profile.instruction;
+            const changed = draft.trim() !== profile.instruction;
+            const verified = Boolean(profile.verifiedAt && profile.verifiedRevision === profile.revision);
+            return (
+              <div key={profile.profileKey} className="p-6 space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      <span>{profile.label}</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-1">{profile.description}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className={`rounded border px-2 py-1 font-bold ${verified ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                        {verified ? 'Đã verify' : 'Chưa verify'}
+                      </span>
+                      {profile.verifiedAt && (
+                        <span className="text-slate-500">
+                          {profile.verifiedBy || 'QC Admin'} · {new Date(profile.verifiedAt).toLocaleString('vi-VN')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono rounded border border-slate-200 bg-slate-50 px-2 py-1 text-slate-500 self-start">REV {profile.revision}</span>
+                </div>
+                <textarea
+                  value={draft}
+                  onChange={(event) => setVeroDrafts((current) => ({ ...current, [profile.profileKey]: event.target.value }))}
+                  rows={4}
+                  maxLength={4000}
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg resize-y focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-[11px] text-slate-500">{draft.length.toLocaleString('vi-VN')} / 4.000 ký tự. Prompt theo loại ảnh được ghép riêng và không thể thay thế quy tắc này.</p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void verifyVeroProfile(profile)}
+                      disabled={changed || verifyingVeroProfile === profile.profileKey}
+                      className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-xs font-bold flex items-center gap-2"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>{verifyingVeroProfile === profile.profileKey ? 'Đang verify...' : 'Verify prompt'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void saveVeroProfile(profile)}
+                      disabled={!changed || savingVeroProfile === profile.profileKey}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-bold flex items-center gap-2"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>{savingVeroProfile === profile.profileKey ? 'Đang xuất bản...' : 'Xuất bản revision mới'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-slate-200 bg-slate-50/70">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Camera className="w-4 h-4 text-indigo-600" />
+                <span>Loại ảnh kiểm định</span>
+              </h2>
+              <p className="text-[11px] text-slate-500 mt-1 max-w-3xl">
+                Quản lý nhãn ảnh, biểu tượng và hướng dẫn chuyên biệt theo loại ảnh. Hướng dẫn này được ghép với quy tắc Vero đã xuất bản ở trên; không thể làm yếu kiểm tra ảnh rõ, đúng khung và vật thể trung tâm.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={startCreatePhotoType}
+              className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-2 self-start"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Thêm loại ảnh</span>
+            </button>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-3">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={photoTypeSearch}
+                onChange={(e) => setPhotoTypeSearch(e.target.value)}
+                placeholder="Tìm theo tên hoặc mã loại ảnh..."
+                className="w-full pl-9 pr-4 py-2.5 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+              />
+            </div>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value as typeof categoryFilter)}
+              className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+            >
+              <option value="ALL">Tất cả nhóm</option>
+              {CATEGORY_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {isPhotoTypeEditorOpen && (
+          <form onSubmit={handleSavePhotoType} className="p-6 border-b border-slate-200 bg-indigo-50/40 space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-[160px_1fr_180px_140px_110px] gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Mã loại ảnh</label>
+                <input
+                  type="text"
+                  value={editingType || draft.type || ''}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, type: e.target.value }))}
+                  disabled={Boolean(editingType)}
+                  placeholder="VD: SCREEN_WIFI"
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg disabled:bg-slate-100 disabled:text-slate-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Tên hiển thị</label>
+                <input
+                  type="text"
+                  value={draft.label || ''}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, label: e.target.value }))}
+                  placeholder="VD: Màn hình kết nối Wi-Fi"
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Nhóm</label>
+                <select
+                  value={draft.category || 'OTHER'}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, category: e.target.value as PhotoTypeOption['category'] }))}
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                >
+                  {CATEGORY_OPTIONS.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Biểu tượng</label>
+                <input
+                  type="text"
+                  value={draft.iconEmoji || ''}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, iconEmoji: e.target.value }))}
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Thứ tự</label>
+                <input
+                  type="number"
+                  value={draft.sortOrder ?? 999}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, sortOrder: Number(e.target.value) }))}
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-[220px_140px_1fr] gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Chế độ xác minh</label>
+                <select
+                  value={draft.verificationMode || 'EVIDENCE_ONLY'}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, verificationMode: e.target.value as NonNullable<PhotoTypeOption['verificationMode']> }))}
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                >
+                  {VERIFICATION_MODE_OPTIONS.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Schema version</label>
+                <input
+                  type="text"
+                  value={draft.schemaVersion || '1.0'}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, schemaVersion: e.target.value }))}
+                  className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Output schema JSON</label>
+                <textarea
+                  value={JSON.stringify(draft.outputSchema || { type: 'object', required: [], properties: {} }, null, 2)}
+                  onChange={(e) => {
+                    try {
+                      const parsed = JSON.parse(e.target.value);
+                      setDraft((prev) => ({ ...prev, outputSchema: parsed }));
+                      setPhotoTypeError('');
+                    } catch {
+                      setPhotoTypeError('Output schema phải là JSON hợp lệ.');
+                    }
+                  }}
+                  rows={5}
+                  className="w-full p-2.5 font-mono text-[11px] bg-white border border-slate-300 rounded-lg resize-y"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Hướng dẫn Vero khi phân tích ảnh</label>
+              <textarea
+                value={draft.aiPromptInstruction || ''}
+                onChange={(e) => setDraft((prev) => ({ ...prev, aiPromptInstruction: e.target.value }))}
+                rows={3}
+                maxLength={2000}
+                placeholder="Mô tả điều Vero cần kiểm tra trong loại ảnh này..."
+                className="w-full p-2.5 text-xs bg-white border border-slate-300 rounded-lg resize-none"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">{(draft.aiPromptInstruction || '').length.toLocaleString('vi-VN')} / 2.000 ký tự</p>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={draft.isActive ?? true}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, isActive: e.target.checked }))}
+                  className="w-4 h-4 accent-indigo-600"
+                />
+                Đang dùng trong mẫu mới
+              </label>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={closePhotoTypeEditor} className="px-4 py-2 rounded-lg bg-white border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50">
+                  Hủy
+                </button>
+                <button type="submit" disabled={isSavingPhotoType} className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-xs font-bold flex items-center gap-2">
+                  <Save className="w-4 h-4" />
+                  <span>{isSavingPhotoType ? 'Đang lưu...' : 'Lưu loại ảnh'}</span>
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        {photoTypeError && (
+          <div className="mx-6 mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
+            {photoTypeError}
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-6 py-3 font-bold">Loại ảnh</th>
+                <th className="px-4 py-3 font-bold">Nhóm</th>
+                <th className="px-4 py-3 font-bold">Hướng dẫn Vero</th>
+                <th className="px-4 py-3 font-bold">Verify</th>
+                <th className="px-4 py-3 font-bold text-center">Thứ tự</th>
+                <th className="px-4 py-3 font-bold text-right">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {isLoadingPhotoTypes && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-6 text-sm text-slate-500">Đang tải loại ảnh kiểm định...</td>
+                </tr>
+              )}
+              {!isLoadingPhotoTypes && filteredPhotoTypes.map((item) => (
+                <tr key={item.type} className={!item.isActive ? 'bg-slate-50 text-slate-500' : 'bg-white'}>
+                  <td className="px-6 py-4 min-w-[260px]">
+                    <div className="flex items-start gap-3">
+                      <span className="text-lg leading-none mt-0.5">{item.iconEmoji}</span>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900 flex items-center gap-2 flex-wrap">
+                          <span>{item.label}</span>
+                          {item.isSystem && <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 text-[10px]">Hệ thống</span>}
+                          {!item.isActive && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[10px]">Đã tắt</span>}
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-400 mt-0.5">{item.type}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 text-xs font-semibold text-slate-700 whitespace-nowrap">{CATEGORY_LABELS[item.category]}</td>
+                  <td className="px-4 py-4 text-xs text-slate-500 min-w-[300px] max-w-xl">
+                    <span className="line-clamp-2">{item.aiPromptInstruction}</span>
+                  </td>
+                  <td className="px-4 py-4 text-xs min-w-[180px]">
+                    <div className="space-y-2">
+                      <span className={`inline-flex rounded border px-2 py-1 font-bold ${item.promptVerifiedAt ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                        {item.promptVerifiedAt ? 'Đã verify' : 'Chưa verify'}
+                      </span>
+                      {item.promptVerifiedAt && (
+                        <div className="text-[11px] text-slate-500">
+                          {item.promptVerifiedBy || 'QC Admin'} · {new Date(item.promptVerifiedAt).toLocaleString('vi-VN')}
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 text-center text-xs font-mono text-slate-500">{item.sortOrder ?? 999}</td>
+                  <td className="px-4 py-4">
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleVerifyPhotoType(item)}
+                        className="p-2 rounded-lg border border-slate-200 hover:bg-emerald-50 text-emerald-600"
+                        title="Verify prompt loại ảnh"
+                        disabled={verifyingPhotoType === item.type}
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePhotoType(item)}
+                        className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600"
+                        title={item.isActive ? 'Tắt khỏi mẫu mới' : 'Bật lại cho mẫu mới'}
+                      >
+                        {item.isActive ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startEditPhotoType(item)}
+                        className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-indigo-600"
+                        title="Sửa loại ảnh"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePhotoType(item)}
+                        disabled={Boolean(item.isSystem)}
+                        className="p-2 rounded-lg border border-slate-200 hover:bg-red-50 text-red-600 disabled:text-slate-300 disabled:hover:bg-white disabled:cursor-not-allowed"
+                        title={item.isSystem ? 'Loại hệ thống không thể xóa' : 'Xóa loại ảnh'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!isLoadingPhotoTypes && filteredPhotoTypes.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-sm text-slate-500">Không có loại ảnh phù hợp bộ lọc.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 };
-

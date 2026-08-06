@@ -29,6 +29,9 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD}
       PGDATABASE: ${POSTGRES_DB:-tool_report_qc}
       QC_ADMIN_API_KEY: ${QC_ADMIN_API_KEY:?Set QC_ADMIN_API_KEY in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      BOT_NAME: ${BOT_NAME:-Vero}
       UPLOADS_DIR: /var/lib/tool-report-qc/uploads
       DOCX_TEMPLATES_DIR: /var/lib/tool-report-qc/templates
     volumes:

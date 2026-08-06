@@ -5,16 +5,30 @@ export interface PhotoTypeOption {
   label: string;
   category: 'VISUAL' | 'ANIMATION' | 'IMEI' | 'CAMERA' | 'BLUETOOTH' | 'MMI' | 'OTHER';
   iconEmoji: string;
+  verificationMode?: 'OCR_ID' | 'OCR_TEXT' | 'SCREEN_STATE' | 'VISUAL' | 'MEASUREMENT' | 'EVIDENCE_ONLY';
+  schemaVersion?: string;
+  outputSchema?: Record<string, unknown>;
   aiPromptInstruction: string;
+  promptVerifiedAt?: string | null;
+  promptVerifiedBy?: string | null;
+  promptVerifiedHash?: string | null;
+  isSystem?: boolean;
+  isActive?: boolean;
+  sortOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export const PHOTO_TYPE_OPTIONS: PhotoTypeOption[] = [
+export const DEFAULT_PHOTO_TYPE_OPTIONS: PhotoTypeOption[] = [
   // Ngoại quan
   {
     type: 'VISUAL_FRONT',
     label: 'Mặt trước (Kính màn hình)',
     category: 'VISUAL',
     iconEmoji: '📱',
+    verificationMode: 'VISUAL',
+    schemaVersion: '1.0',
+    outputSchema: { type: 'object', required: [], properties: { primaryObservation: { type: 'string' } } },
     aiPromptInstruction: 'Phân tích kính mặt trước: Kiểm tra vết trầy xước, nứt vỡ, hở viền kính hoặc bụi lọt.'
   },
   {
@@ -167,46 +181,17 @@ export const PHOTO_TYPE_OPTIONS: PhotoTypeOption[] = [
     label: 'Ảnh Tổng Quan / Tùy Chỉnh Khác',
     category: 'OTHER',
     iconEmoji: '📷',
+    verificationMode: 'EVIDENCE_ONLY',
+    schemaVersion: '1.0',
+    outputSchema: { type: 'object', required: [], properties: { primaryObservation: { type: 'string' } } },
     aiPromptInstruction: 'Phân tích tổng quan hình ảnh kiểm định QC sản phẩm điện tử.'
   }
 ];
 
-export const PHOTO_TYPES_STORAGE_KEY = 'qc_custom_photo_types_v2';
+export const PHOTO_TYPE_OPTIONS = DEFAULT_PHOTO_TYPE_OPTIONS;
 
-export function loadPhotoTypeOptions(): PhotoTypeOption[] {
-  try {
-    const stored = localStorage.getItem(PHOTO_TYPES_STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    }
-  } catch (e) {
-    console.warn('Failed to load custom photo types:', e);
-  }
-  return PHOTO_TYPE_OPTIONS;
-}
-
-export function savePhotoTypeOptions(options: PhotoTypeOption[]): void {
-  try {
-    localStorage.setItem(PHOTO_TYPES_STORAGE_KEY, JSON.stringify(options));
-  } catch (e) {
-    console.error('Failed to save custom photo types:', e);
-  }
-}
-
-export function resetPhotoTypeOptions(): PhotoTypeOption[] {
-  try {
-    localStorage.removeItem(PHOTO_TYPES_STORAGE_KEY);
-  } catch (e) {
-    console.error('Failed to reset custom photo types:', e);
-  }
-  return PHOTO_TYPE_OPTIONS;
-}
-
-export function getPhotoTypeInfo(type?: PhotoType): PhotoTypeOption {
-  const currentOptions = loadPhotoTypeOptions();
-  if (!type) return currentOptions[currentOptions.length - 1] || PHOTO_TYPE_OPTIONS[PHOTO_TYPE_OPTIONS.length - 1];
-  return currentOptions.find(p => p.type === type) || currentOptions.find(p => p.type === 'GENERAL_OTHER') || currentOptions[currentOptions.length - 1] || PHOTO_TYPE_OPTIONS[PHOTO_TYPE_OPTIONS.length - 1];
+export function getPhotoTypeInfo(type?: PhotoType, options: PhotoTypeOption[] = PHOTO_TYPE_OPTIONS): PhotoTypeOption {
+  const fallback = options.find((p) => p.type === 'GENERAL_OTHER') || DEFAULT_PHOTO_TYPE_OPTIONS[DEFAULT_PHOTO_TYPE_OPTIONS.length - 1];
+  if (!type) return fallback;
+  return options.find(p => p.type === type) || DEFAULT_PHOTO_TYPE_OPTIONS.find(p => p.type === type) || fallback;
 }

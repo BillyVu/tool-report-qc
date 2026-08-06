@@ -31,6 +31,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [kpis, setKpis] = useState<DashboardKPI>({ totalJobs: 0, inProgress: 0, completed: 0, failed: 0, passRate: 100, todayCount: 0 });
   const [jobs, setJobs] = useState<InspectionJob[]>([]);
   const [loadError, setLoadError] = useState('');
+  const [period, setPeriod] = useState<'today' | '7d' | 'all'>('all');
 
   const loadDashboard = async () => {
     setLoadError('');
@@ -47,8 +48,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     void loadDashboard();
   }, []);
 
-  const recentJobs = jobs.slice(0, 5);
-  const failedJobs = jobs.filter(j => j.status === 'FAILED');
+  const scopedJobs = jobs.filter((job) => {
+    if (period === 'all') return true;
+    const createdAt = new Date(job.createdAt).getTime();
+    const cutoff = Date.now() - (period === 'today' ? 24 : 7 * 24) * 60 * 60 * 1000;
+    return createdAt >= cutoff;
+  });
+  const scopedCompleted = scopedJobs.filter((job) => job.status === 'COMPLETED').length;
+  const scopedFailed = scopedJobs.filter((job) => job.status === 'FAILED').length;
+  const scopedFinished = scopedCompleted + scopedFailed;
+  const scopedKpis: DashboardKPI = {
+    totalJobs: scopedJobs.length,
+    inProgress: scopedJobs.filter((job) => job.status === 'IN_PROGRESS').length,
+    completed: scopedCompleted,
+    failed: scopedFailed,
+    passRate: scopedFinished ? Math.round((scopedCompleted / scopedFinished) * 100) : 0,
+    todayCount: scopedJobs.filter((job) => new Date(job.createdAt).getTime() >= Date.now() - 86400000).length,
+  };
+  const recentJobs = scopedJobs.slice(0, 5);
+  const failedJobs = scopedJobs.filter(j => j.status === 'FAILED');
 
   const handleQuickExport = async (job: InspectionJob, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -68,6 +86,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             Theo dõi tiến độ thu thập dữ liệu ảnh từ xưởng sản xuất theo thời gian thực và quản lý xuất báo cáo Word.
           </p>
         </div>
+        <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+          Thời gian
+          <select value={period} onChange={(e) => setPeriod(e.target.value as typeof period)} className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-700">
+            <option value="today">24 giờ qua</option>
+            <option value="7d">7 ngày qua</option>
+            <option value="all">Toàn bộ</option>
+          </select>
+        </label>
         <div className="grid w-full grid-cols-1 gap-2 sm:w-auto sm:grid-cols-2">
           <button
             onClick={() => onNavigateTab('templates')}
@@ -81,7 +107,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
           >
             <ClipboardList className="w-4 h-4" />
-            <span>Quản lý Tất cả Lô QC ({kpis.totalJobs})</span>
+            <span>Quản lý Tất cả Lô QC ({scopedKpis.totalJobs})</span>
           </button>
         </div>
       </div>
@@ -93,7 +119,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div data-tour="dashboard-kpis" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {/* Total Jobs */}
         <div className="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden group hover:border-blue-300 transition-all">
           <div className="flex items-center justify-between">
@@ -105,12 +131,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-slate-900">{kpis.totalJobs}</span>
+            <span className="text-3xl font-extrabold text-slate-900">{scopedKpis.totalJobs}</span>
             <span className="text-xs text-slate-500 font-medium">lô hàng</span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-            <span>Tỷ lệ Đạt tiêu chuẩn</span>
-            <span className="font-bold text-emerald-600">{kpis.passRate}%</span>
+            <span title="Chỉ tính các lô đã kết thúc: Đã hoàn thành / (Đã hoàn thành + Có lỗi)">Tỷ lệ đạt (lô đã kết thúc)</span>
+            <span className="font-bold text-emerald-600">{scopedKpis.passRate}%</span>
           </div>
         </div>
 
@@ -125,7 +151,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-amber-900">{kpis.inProgress}</span>
+            <span className="text-3xl font-extrabold text-amber-900">{scopedKpis.inProgress}</span>
             <span className="text-xs text-amber-700 font-medium">chuyền đang chạy</span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
@@ -145,7 +171,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-emerald-900">{kpis.completed}</span>
+            <span className="text-3xl font-extrabold text-emerald-900">{scopedKpis.completed}</span>
             <span className="text-xs text-emerald-700 font-medium">sẵn sàng xuất Word</span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
@@ -165,12 +191,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-extrabold text-red-900">{kpis.failed}</span>
+            <span className="text-3xl font-extrabold text-red-900">{scopedKpis.failed}</span>
             <span className="text-xs text-red-700 font-medium">cần xử lý khẩn cấp</span>
           </div>
           <div className="mt-3 pt-3 border-t border-red-200/60 flex items-center justify-between text-xs text-red-700">
-            <span>Cảnh báo ưu tiên</span>
-            <span className="font-bold underline cursor-pointer" onClick={() => onNavigateTab('inspections')}>Xem chi tiết →</span>
+            <span>{scopedKpis.failed > 0 ? 'Cảnh báo ưu tiên' : 'Không có lô cần xử lý'}</span>
+            {scopedKpis.failed > 0 && <span className="font-bold underline cursor-pointer" onClick={() => onNavigateTab('inspections')}>Xem chi tiết →</span>}
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, moderateStepResults, updateJobStatusSql } from './adminJobs';
+import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs';
 
 test('builds initial step results from the saved checklist template snapshot', () => {
   const now = '2026-08-02T00:00:00.000Z';
@@ -31,6 +31,24 @@ test('builds initial step results from the saved checklist template snapshot', (
 test('job status update SQL casts the admin status parameter to qc_job_status', () => {
   assert.match(updateJobStatusSql, /status = \$2::qc_job_status/);
   assert.match(updateJobStatusSql, /WHEN \$2::qc_job_status = 'COMPLETED'/);
+});
+
+test('extends active worker sessions from the current expiry time', () => {
+  const now = new Date('2026-08-05T10:00:00.000Z');
+  const currentExpiry = new Date('2026-08-05T18:00:00.000Z');
+
+  const extendedExpiry = calculateExtendedSessionExpiry(currentExpiry, 4, now);
+
+  assert.equal(extendedExpiry.toISOString(), '2026-08-05T22:00:00.000Z');
+});
+
+test('extends expired worker sessions from the admin action time', () => {
+  const now = new Date('2026-08-05T10:00:00.000Z');
+  const currentExpiry = new Date('2026-08-05T08:00:00.000Z');
+
+  const extendedExpiry = calculateExtendedSessionExpiry(currentExpiry, 2, now);
+
+  assert.equal(extendedExpiry.toISOString(), '2026-08-05T12:00:00.000Z');
 });
 
 test('moderates a single step result while preserving worker data', () => {
