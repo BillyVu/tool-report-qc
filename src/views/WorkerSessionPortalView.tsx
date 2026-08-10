@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   CheckCircle2, 
-  XCircle, 
   Clock, 
   Upload, 
   Sparkles, 
@@ -32,7 +31,7 @@ import { getDeviceMacAddress, getDeviceInfo } from '../utils/deviceTracker';
 import { usePhotoTypes } from '../hooks/usePhotoTypes';
 import { PhotoCaptureModal } from '../components/worker/PhotoCaptureModal';
 import { VeroBrand } from '../components/branding/VeroBrand';
-import { overallSummary, stepPhotoProgress, stepRailStatus, stepRailStatusLabel } from '../utils/portalSummary';
+import { overallSummary, stepIsDone, stepMissingItems, stepPhotoProgress, stepRailStatus, stepRailStatusLabel } from '../utils/portalSummary';
 
 type PhotoSource = 'CAMERA' | 'UPLOAD';
 
@@ -222,6 +221,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   const [sectionUploadingKey, setSectionUploadingKey] = useState<string | null>(null);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
+  const [submitWarning, setSubmitWarning] = useState<{ stepId: string; title: string; missing: string[] }[] | null>(null);
   const [workerNotice, setWorkerNotice] = useState('');
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const botName = sessionData?.botName || 'Vero';
@@ -736,11 +736,6 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     await handlePhotoUploadForSlot(target.stepId, target.slotIndex, file, target.source, target.captureFrame, sharpnessScore, false, target.aspectRatio);
   };
 
-  // Handles Step Status change (PASS / FAIL)
-  const handleStepStatusChange = (stepId: string, status: 'PASS' | 'FAIL') => {
-    setStepResults(prev => prev.map(sr => sr.stepId === stepId ? { ...sr, status } : sr));
-  };
-
   // Handles Note or Text change
   const handleStepNoteChange = (stepId: string, note: string) => {
     setStepResults(prev => prev.map(sr => sr.stepId === stepId ? { ...sr, note } : sr));
@@ -894,11 +889,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     }
   };
 
-  const handleSubmitResults = async () => {
-    if (uploadingSlotKey !== null || sectionUploadingKey !== null) {
-      alert('Có ảnh đang được tải lên. Vui lòng chờ tải xong trước khi nộp báo cáo.');
-      return;
-    }
+  const doSubmitResults = async () => {
     setIsSubmitting(true);
     try {
       const res = await workerSessionApi.submitResults(
@@ -924,6 +915,26 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSubmitResults = async () => {
+    if (uploadingSlotKey !== null || sectionUploadingKey !== null) {
+      alert('Có ảnh đang được tải lên. Vui lòng chờ tải xong trước khi nộp báo cáo.');
+      return;
+    }
+    const missingSteps = template.steps
+      .map((step) => {
+        const stepRes = stepResults.find((result) => result.stepId === step.stepId);
+        const missing = stepMissingItems(step, stepRes);
+        return missing.length ? { stepId: step.stepId, title: step.title, missing } : null;
+      })
+      .filter((item): item is { stepId: string; title: string; missing: string[] } => item !== null);
+
+    if (missingSteps.length > 0) {
+      setSubmitWarning(missingSteps);
+      return;
+    }
+    await doSubmitResults();
   };
 
   // Download Report Word
@@ -1067,13 +1078,13 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                 <div className="text-xs font-bold text-slate-700">Tổng kết kiểm định</div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Đạt: {summary.passed}
+                    Hoàn thành: {summary.done}
                   </span>
-                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">
-                    Lỗi: {summary.failed}
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                    Đang làm: {summary.incomplete}
                   </span>
                   <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                    Đang kiểm: {summary.pending}
+                    Chưa làm: {summary.notStarted}
                   </span>
                   <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
                     Tổng: {summary.total}
@@ -1132,9 +1143,8 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     const isActive = activeStepId === step.stepId;
                     const progress = stepPhotoProgress(step, stepRes);
                     const statusStyles: Record<string, string> = {
-                      PASS: 'bg-emerald-500 text-white',
-                      FAIL: 'bg-red-500 text-white',
-                      IN_PROGRESS: 'bg-amber-400 text-slate-900',
+                      DONE: 'bg-emerald-500 text-white',
+                      INCOMPLETE: 'bg-amber-400 text-slate-900',
                       NOT_STARTED: 'bg-slate-200 text-slate-500',
                     };
                     return (
@@ -1155,7 +1165,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                         </span>
                         <span className="hidden min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700 sm:block">{step.title}</span>
                         <span className="text-[10px] font-bold text-slate-500 shrink-0">
-                          {status === 'IN_PROGRESS' ? `${progress.actual}/${progress.required}` : stepRailStatusLabel(status)}
+                          {status === 'INCOMPLETE' ? `${progress.actual}/${progress.required}` : stepRailStatusLabel(status)}
                         </span>
                       </button>
                     );
@@ -1184,10 +1194,8 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                 data-step-card
                 data-step-id={step.stepId}
                 className={`bg-white border rounded-2xl p-5 transition-all space-y-4 shadow-sm scroll-mt-4 ${
-                  stepRes?.status === 'PASS'
+                  stepIsDone(step, stepRes)
                     ? 'border-emerald-300'
-                    : stepRes?.status === 'FAIL'
-                    ? 'border-red-300'
                     : 'border-slate-200'
                 }`}
               >
@@ -1215,33 +1223,25 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     </div>
                   </div>
 
-                  {/* Pass/Fail Status Buttons */}
-                  <div className="grid grid-cols-2 gap-1.5 sm:flex sm:items-center sm:shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleStepStatusChange(step.stepId, 'PASS')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
-                        stepRes?.status === 'PASS'
-                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>ĐẠT (PASS)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleStepStatusChange(step.stepId, 'FAIL')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 ${
-                        stepRes?.status === 'FAIL'
-                          ? 'bg-red-600 text-white shadow-md shadow-red-500/20'
-                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                      }`}
-                    >
-                      <XCircle className="w-4 h-4" />
-                      <span>LỖI (FAIL)</span>
-                    </button>
+                  {/* Step completion badge (derived from required fields) */}
+                  <div className="flex items-center shrink-0">
+                    {(() => {
+                      const missing = stepMissingItems(step, stepRes);
+                      if (missing.length === 0) {
+                        return (
+                          <span className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Đã đủ thông tin
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          Còn thiếu {missing.length} mục
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -1776,6 +1776,38 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
             <div className="mt-5 flex gap-3">
               <button type="button" onClick={() => { setCaptureTarget({ ...manualOverride.target, selectedFile: manualOverride.file, error: '' }); setManualOverride(null); }} className="flex-1 border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Căn lại ảnh</button>
               <button type="button" onClick={() => { const pending = manualOverride; setManualOverride(null); void handlePhotoUploadForSlot(pending.target.stepId, pending.target.slotIndex, pending.file, pending.target.source, pending.target.captureFrame, pending.sharpnessScore, true, pending.target.aspectRatio).catch((error) => alert(error instanceof Error ? error.message : 'Không thể tải ảnh thủ công.')); }} className="flex-1 bg-amber-500 px-3 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400">Xác nhận tải ảnh</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {submitWarning && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/75 p-4" role="dialog" aria-modal="true" aria-label="Cảnh báo còn thiếu thông tin">
+          <div className="w-full max-w-md border border-amber-300 bg-white p-5 shadow-2xl max-h-[85dvh] overflow-y-auto">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-600" />
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Còn thiếu thông tin bắt buộc</h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                  Vui lòng kiểm tra lại trước khi nộp báo cáo:
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-3">
+              {submitWarning.map((item) => (
+                <div key={item.stepId} className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                  <p className="text-xs font-bold text-slate-800">Bước {item.title}</p>
+                  <ul className="mt-1.5 list-disc pl-4 space-y-0.5">
+                    {item.missing.map((m) => (
+                      <li key={m} className="text-[11px] text-slate-700">{m}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex gap-3">
+              <button type="button" onClick={() => setSubmitWarning(null)} className="flex-1 border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Quay lại điền thêm</button>
+              <button type="button" onClick={() => { setSubmitWarning(null); void doSubmitResults(); }} className="flex-1 bg-amber-500 px-3 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400">Nộp luôn</button>
             </div>
           </div>
         </div>
