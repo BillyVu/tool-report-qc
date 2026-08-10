@@ -28,6 +28,7 @@ interface PhotoCaptureModalProps {
   frame: CaptureFrame;
   aspectRatio?: number;
   selectedFile?: File;
+  initialImageUrl?: string;
   slotLabel: string;
   initialError?: string;
   onClose: () => void;
@@ -56,7 +57,7 @@ function clampRect(r: RectNorm, min = 0.04): RectNorm {
   return { x, y, w, h };
 }
 
-export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, slotLabel, initialError, onClose, onComplete }: PhotoCaptureModalProps) {
+export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, initialImageUrl, slotLabel, initialError, onClose, onComplete }: PhotoCaptureModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,8 +65,10 @@ export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, slot
   const dragRef = useRef<DragState | null>(null);
   const dragStartRef = useRef<{ clientX: number; clientY: number } | null>(null);
   const initializedRef = useRef(false);
+  const initialLoadedRef = useRef(false);
 
   const [source, setSource] = useState<File | null>(selectedFile || null);
+  const [isLoadingInitial, setIsLoadingInitial] = useState(Boolean(initialImageUrl && !selectedFile));
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [work, setWork] = useState<{ canvas: HTMLCanvasElement; w: number; h: number } | null>(null);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
@@ -78,7 +81,7 @@ export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, slot
   const [format, setFormat] = useState<'jpeg' | 'png'>('jpeg');
   const [quality, setQuality] = useState(0.85);
   const [cameraError, setCameraError] = useState('');
-  const [isStartingCamera, setIsStartingCamera] = useState(mode === 'CAMERA' && !selectedFile);
+  const [isStartingCamera, setIsStartingCamera] = useState(mode === 'CAMERA' && !selectedFile && !initialImageUrl);
   const [isPreparing, setIsPreparing] = useState(false);
   const [sharpnessError, setSharpnessError] = useState(initialError || '');
 
@@ -99,6 +102,31 @@ export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, slot
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   };
+
+  useEffect(() => {
+    if (!initialImageUrl || source || selectedFile || initialLoadedRef.current) return;
+    initialLoadedRef.current = true;
+    let cancelled = false;
+    const loadExistingImage = async () => {
+      setIsLoadingInitial(true);
+      setSharpnessError('');
+      try {
+        const response = await fetch(initialImageUrl);
+        if (!response.ok) throw new Error('Không tải được ảnh hiện tại từ server.');
+        const blob = await response.blob();
+        if (cancelled) return;
+        setSource(new File([blob], `current-${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' }));
+      } catch (error) {
+        if (!cancelled) setSharpnessError(error instanceof Error ? error.message : 'Không tải được ảnh hiện tại từ server.');
+      } finally {
+        if (!cancelled) setIsLoadingInitial(false);
+      }
+    };
+    void loadExistingImage();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialImageUrl, source, selectedFile]);
 
   useEffect(() => {
     if (!source) return;
@@ -377,16 +405,35 @@ export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, slot
         <main className="flex min-h-0 flex-1 flex-col justify-center p-4">
           {!source && (
             <div className="mx-auto w-full max-w-2xl">
-              <div className="relative mx-auto overflow-hidden border-2 border-sky-300 bg-black aspect-video max-h-[55dvh]">
-                {!cameraError && <video ref={videoRef} className={`h-full w-full object-cover ${isStartingCamera ? 'hidden' : ''}`} playsInline muted />}
-                {isStartingCamera && <div className="grid h-full place-items-center text-sm text-slate-300"><RefreshCw className="mr-2 h-5 w-5 animate-spin" />Đang mở camera...</div>}
-              </div>
-              <p className="mt-3 text-center text-xs text-slate-300">Đặt sản phẩm chính vào giữa khung, đủ sáng và lấy nét trước khi chụp.</p>
-              {cameraError && <div className="mt-3 flex items-start gap-2 border border-amber-400/50 bg-amber-300/10 p-3 text-xs text-amber-100"><AlertTriangle className="h-4 w-4 shrink-0" />{cameraError}</div>}
-              <div className="mt-4 flex gap-3">
-                {!cameraError && <button type="button" onClick={() => void captureFromCamera()} disabled={isStartingCamera} className="flex flex-1 items-center justify-center gap-2 bg-sky-500 py-3 text-sm font-bold text-slate-950 disabled:opacity-50"><Camera className="h-5 w-5" />Chụp ảnh</button>}
-                <label className="flex flex-1 cursor-pointer items-center justify-center gap-2 border border-slate-600 py-3 text-sm font-bold text-white hover:bg-slate-800"><ImageUp className="h-5 w-5" />Tải ảnh<input className="hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) { setSource(file); setSharpnessError(''); } }} /></label>
-              </div>
+              {isLoadingInitial ? (
+                <div className="flex aspect-video max-h-[55dvh] flex-col items-center justify-center gap-3 border-2 border-sky-300 bg-black text-sm text-slate-300">
+                  <RefreshCw className="h-6 w-6 animate-spin text-sky-400" />
+                  Đang tải ảnh hiện tại để cắt lại...
+                </div>
+              ) : mode === 'CAMERA' ? (
+                <>
+                  <div className="relative mx-auto overflow-hidden border-2 border-sky-300 bg-black aspect-video max-h-[55dvh]">
+                    {!cameraError && <video ref={videoRef} className={`h-full w-full object-cover ${isStartingCamera ? 'hidden' : ''}`} playsInline muted />}
+                    {isStartingCamera && <div className="grid h-full place-items-center text-sm text-slate-300"><RefreshCw className="mr-2 h-5 w-5 animate-spin" />Đang mở camera...</div>}
+                  </div>
+                  <p className="mt-3 text-center text-xs text-slate-300">Đặt sản phẩm chính vào giữa khung, đủ sáng và lấy nét trước khi chụp.</p>
+                  {cameraError && <div className="mt-3 flex items-start gap-2 border border-amber-400/50 bg-amber-300/10 p-3 text-xs text-amber-100"><AlertTriangle className="h-4 w-4 shrink-0" />{cameraError}</div>}
+                  <div className="mt-4 flex gap-3">
+                    {!cameraError && <button type="button" onClick={() => void captureFromCamera()} disabled={isStartingCamera} className="flex flex-1 items-center justify-center gap-2 bg-sky-500 py-3 text-sm font-bold text-slate-950 disabled:opacity-50"><Camera className="h-5 w-5" />Chụp ảnh</button>}
+                    <label className="flex flex-1 cursor-pointer items-center justify-center gap-2 border border-slate-600 py-3 text-sm font-bold text-white hover:bg-slate-800"><ImageUp className="h-5 w-5" />Tải ảnh<input className="hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) { setSource(file); setSharpnessError(''); } }} /></label>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mx-auto flex aspect-video max-h-[55dvh] flex-col items-center justify-center gap-4 border-2 border-dashed border-sky-500 bg-slate-900 p-8 text-center">
+                    <p className="text-sm font-semibold text-slate-200">Chọn ảnh từ thiết bị để cắt lại hoặc thay thế ảnh công nhân đã gửi</p>
+                    <label className="flex cursor-pointer items-center justify-center gap-2 border border-slate-600 bg-slate-800 px-8 py-4 text-sm font-bold text-white hover:bg-slate-700">
+                      <ImageUp className="h-5 w-5" />Tải ảnh lên<input className="hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) { setSource(file); setSharpnessError(''); } }} />
+                    </label>
+                    <p className="text-[11px] text-slate-500">Định dạng JPG / PNG / WEBP</p>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
