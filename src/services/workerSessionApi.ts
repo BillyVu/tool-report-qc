@@ -152,7 +152,11 @@ export function createWorkerSessionApi(options: WorkerSessionApiOptions = {}) {
       const remaining = calculateRemaining(payload.expiresAt, now);
       return {
         isValid: true,
-        isExpired: remaining.isExpired,
+        // The server returns 410 when the session has expired; a 200 response is
+        // authoritative, so never mark the session expired from the device clock
+        // (a skewed device clock would otherwise show the expired screen while
+        // the server still serves a valid session).
+        isExpired: false,
         job: mapInspectionJob(payload.job),
         template: payload.template,
         hoursRemaining: remaining.hoursRemaining,

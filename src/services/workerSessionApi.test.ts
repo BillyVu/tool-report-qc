@@ -76,6 +76,32 @@ test('returns expired worker session state for expired API sessions', async () =
   assert.equal(session.job?.id, 'JOB-001');
 });
 
+test('trusts the server 200 status even when the device clock is past expiresAt', async () => {
+  const api = createWorkerSessionApi({
+    fetch: async () => new Response(JSON.stringify({
+      job: {
+        id: 'JOB-001',
+        batchNumber: 'BATCH-001',
+        productCode: 'PRD-001',
+        productName: 'May test',
+        status: 'IN_PROGRESS',
+        stepResults: [],
+      },
+      template: { id: 'TPL-001', title: 'Checklist', steps: [], updatedAt: '2026-08-02T00:00:00.000Z' },
+      expiresAt: '2026-08-02T00:00:00.000Z',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    // Device clock one day ahead of expiresAt — must not mark the session expired.
+    now: () => new Date('2026-08-03T00:00:00.000Z').getTime(),
+  });
+
+  const session = await api.getSession('JOB-001', 'token');
+
+  assert.equal(session.isValid, true);
+  assert.equal(session.isExpired, false);
+  assert.equal(session.hoursRemaining, 0);
+  assert.equal(session.minutesRemaining, 0);
+});
+
 test('checks in and submits worker results through the API', async () => {
   const calls: Array<{ url: string; init?: RequestInit; body?: unknown }> = [];
   const api = createWorkerSessionApi({
