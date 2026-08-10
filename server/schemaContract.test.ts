@@ -60,5 +60,5 @@ test('photo quality gate becomes async with PENDING status and a background job 
   assert.match(sql, /evidence_photos_ai_quality_status_check/i);
   assert.match(sql, /'PENDING',\s*'APPROVED',\s*'REJECTED',\s*'UNAVAILABLE',\s*'NOT_CHECKED'/i);
   assert.match(sql, /background_jobs_type_check/i);
-  assert.match(sql, /'PHOTO_PROCESS',\s*'PHOTO_QUALITY'/i);
+  assert.match(sql, /'PHOTO_PROCESS',\s*'GEMINI_ANALYZE',\s*'PHOTO_QUALITY'/i);
 });

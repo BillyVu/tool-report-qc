@@ -11,4 +11,4 @@ ALTER TABLE evidence_photos
 ALTER TABLE background_jobs
   DROP CONSTRAINT IF EXISTS background_jobs_type_check,
   ADD CONSTRAINT background_jobs_type_check
-    CHECK (type IN ('PHOTO_PROCESS', 'PHOTO_QUALITY'));
+    CHECK (type IN ('PHOTO_PROCESS', 'GEMINI_ANALYZE', 'PHOTO_QUALITY'));
