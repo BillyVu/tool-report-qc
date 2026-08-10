@@ -138,7 +138,7 @@ export interface StepResult {
   note: string;
   photoUrl?: string;
   photoSlotsData?: PhotoSlotData[];
-  photos?: { url: string; slotName: string }[];
+  photos?: { url: string; slotName: string; slotIndex?: number }[];
   textValue?: string;
   aiDetectedValue?: string;
   aiResultJson?: Record<string, unknown>;

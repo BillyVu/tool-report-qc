@@ -24,9 +24,10 @@ import {
   Save,
   CircleDot
 } from 'lucide-react';
-import { InspectionJob, StepModerationStatus, StepResult } from '../../types/qc';
+import { InspectionJob, StepModerationStatus, StepResult, CaptureFrame } from '../../types/qc';
 import { adminApi } from '../../services/adminApi';
 import { generateDocxReport } from '../../services/docxExportService';
+import { PhotoCaptureModal } from '../worker/PhotoCaptureModal';
 
 interface InspectionDetailDrawerProps {
   job: InspectionJob | null;
@@ -91,6 +92,14 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
   const [isSavingAdminNotes, setIsSavingAdminNotes] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+  const [editPhotoSlot, setEditPhotoSlot] = useState<{
+    stepId: string;
+    slotIndex: number;
+    slotLabel: string;
+    captureFrame: CaptureFrame;
+    aspectRatio?: number;
+  } | null>(null);
+  const [isReplacingPhoto, setIsReplacingPhoto] = useState(false);
 
   useEffect(() => {
     if (job) {
@@ -206,6 +215,25 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
       console.error('Export DOCX error:', e);
     } finally {
       setTimeout(() => setIsExporting(false), 900);
+    }
+  };
+
+  const handleReplacePhoto = async (file: File, sharpnessScore: number, outputAspect?: number) => {
+    const target = editPhotoSlot;
+    if (!target) return;
+    setEditPhotoSlot(null);
+    setIsReplacingPhoto(true);
+    try {
+      const updated = await adminApi.replaceJobStepPhoto(currentJob.id, target.stepId, target.slotIndex, file, {
+        source: 'UPLOAD',
+        aspectRatio: outputAspect ?? target.aspectRatio,
+      });
+      setCurrentJob(updated);
+      onJobUpdated();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không thể thay ảnh cho lô này.');
+    } finally {
+      setIsReplacingPhoto(false);
     }
   };
 
@@ -452,29 +480,57 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                         {activePhotos.length > 0 ? (
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             {activePhotos.map((photo, index) => (
-                              <button
+                              <div
                                 key={`${photo.url}-${index}`}
-                                type="button"
-                                onClick={() => setLightboxImageUrl(photo.url)}
                                 className="group overflow-hidden rounded-lg border border-slate-200 bg-slate-950 text-left shadow-sm"
                               >
-                                <div className="relative aspect-[4/3] overflow-hidden">
-                                  <img
-                                    src={photo.url}
-                                    alt={photo.slotName}
-                                    className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02]"
-                                  />
-                                  <div className="absolute inset-0 flex items-center justify-center bg-slate-950/45 text-white opacity-0 transition-opacity group-hover:opacity-100">
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold backdrop-blur">
-                                      <Maximize2 className="w-4 h-4" />
-                                      Phóng to
-                                    </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxImageUrl(photo.url)}
+                                  className="block w-full"
+                                  title="Phóng to ảnh"
+                                >
+                                  <div className="relative aspect-[4/3] overflow-hidden">
+                                    <img
+                                      src={photo.url}
+                                      alt={photo.slotName}
+                                      className="h-full w-full object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center bg-slate-950/45 text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1.5 text-xs font-bold backdrop-blur">
+                                        <Maximize2 className="w-4 h-4" />
+                                        Phóng to
+                                      </span>
+                                    </div>
                                   </div>
+                                </button>
+                                <div className="flex items-center justify-between gap-2 border-t border-white/10 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200">
+                                  <span className="truncate">{photo.slotName}</span>
+                                  {photo.slotIndex !== undefined && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const slotDef = activeStepDef?.photoSlotConfigs?.find(
+                                          (cfg) => Number(cfg.slotIndex) === photo.slotIndex,
+                                        );
+                                        setEditPhotoSlot({
+                                          stepId: activeStep.stepId,
+                                          slotIndex: photo.slotIndex!,
+                                          slotLabel: photo.slotName || `Slot ${photo.slotIndex}`,
+                                          captureFrame: slotDef?.captureFrame || 'RECTANGLE',
+                                          aspectRatio: slotDef?.aspectRatio,
+                                        });
+                                      }}
+                                      disabled={isReplacingPhoto}
+                                      className="inline-flex items-center gap-1 rounded-md border border-blue-400/40 bg-blue-500/15 px-2 py-1 text-[10px] font-bold text-blue-300 transition-colors hover:bg-blue-500/30 disabled:opacity-50"
+                                      title="Chụp/tải ảnh mới thay thế ảnh công nhân đã gửi"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                      Sửa ảnh
+                                    </button>
+                                  )}
                                 </div>
-                                <div className="border-t border-white/10 bg-slate-900 px-3 py-2 text-[11px] font-semibold text-slate-200 truncate">
-                                  {photo.slotName}
-                                </div>
-                              </button>
+                              </div>
                             ))}
                           </div>
                         ) : (
@@ -891,6 +947,20 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
             />
           </div>
         </div>
+      )}
+
+      {editPhotoSlot && (
+        <PhotoCaptureModal
+          key={`admin-edit:${currentJob.id}:${editPhotoSlot.stepId}:${editPhotoSlot.slotIndex}`}
+          mode="CAMERA"
+          frame={editPhotoSlot.captureFrame}
+          aspectRatio={editPhotoSlot.aspectRatio}
+          slotLabel={editPhotoSlot.slotLabel}
+          onClose={() => setEditPhotoSlot(null)}
+          onComplete={(file, sharpnessScore, outputAspect) => {
+            void handleReplacePhoto(file, sharpnessScore, outputAspect);
+          }}
+        />
       )}
     </>
   );

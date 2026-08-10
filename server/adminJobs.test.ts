@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyStepResultsUpdate, attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs';
+import { applyStepResultsUpdate, attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, replacePhotoInStepResults, updateJobStatusSql } from './adminJobs';
 
 test('builds initial step results from the saved checklist template snapshot', () => {
   const now = '2026-08-02T00:00:00.000Z';
@@ -140,7 +140,7 @@ test('hydrates existing evidence photos into step results for exports', () => {
         { slotIndex: 1, label: 'Slot 1', photoUrl: '/uploads/evidence.jpg' },
       ],
       photos: [
-        { slotName: 'Slot 1', url: '/uploads/evidence.jpg' },
+        { slotName: 'Slot 1', url: '/uploads/evidence.jpg', slotIndex: 1 },
       ],
     },
   ]);
@@ -166,8 +166,8 @@ test('keeps multiple evidence photos for the same test slot', () => {
   );
 
   assert.deepEqual(result[0].photos, [
-    { slotName: 'Bàn phím bật sáng', url: '/uploads/first.png' },
-    { slotName: 'Bàn phím bật sáng', url: '/uploads/second.png' },
+    { slotName: 'Bàn phím bật sáng', url: '/uploads/first.png', slotIndex: 1 },
+    { slotName: 'Bàn phím bật sáng', url: '/uploads/second.png', slotIndex: 1 },
   ]);
 });
 
@@ -213,4 +213,79 @@ test('returns found=false when the mutator does not match a step', async () => {
 
   assert.equal(outcome.found, false);
   assert.equal(client.queries.some((text) => /UPDATE inspection_jobs/.test(text)), false);
+});
+
+test('replaces a photo URL for a matching step slot and keeps the slot label', () => {
+  const result = replacePhotoInStepResults(
+    [
+      {
+        stepId: 'S1',
+        status: 'PASS',
+        note: 'Ảnh đạt',
+        photoSlotsData: [
+          { slotIndex: 1, label: 'Mặt trước', photoUrl: '/uploads/old.jpg' },
+          { slotIndex: 2, label: 'Mặt sau' },
+        ],
+        photos: [
+          { slotName: 'Mặt trước', url: '/uploads/old.jpg', slotIndex: 1 },
+        ],
+      },
+    ],
+    {
+      stepId: 'S1',
+      slotIndex: 1,
+      photoUrl: '/uploads/new.jpg',
+      manualOverride: true,
+      aiQualityStatus: 'UNAVAILABLE',
+    },
+  );
+
+  assert.equal(result.found, true);
+  assert.deepEqual(result.updatedSteps[0], {
+    stepId: 'S1',
+    status: 'PASS',
+    note: 'Ảnh đạt',
+    photoUrl: '/uploads/new.jpg',
+    photoSlotsData: [
+      { slotIndex: 1, label: 'Mặt trước', photoUrl: '/uploads/new.jpg', manualOverride: true, aiQualityStatus: 'UNAVAILABLE' },
+      { slotIndex: 2, label: 'Mặt sau' },
+    ],
+    photos: [
+      { slotName: 'Mặt trước', url: '/uploads/new.jpg', slotIndex: 1 },
+    ],
+  });
+});
+
+test('appends a new slot entry when replacing a slot that has no photo yet', () => {
+  const result = replacePhotoInStepResults(
+    [
+      {
+        stepId: 'S1',
+        status: 'PENDING',
+        note: 'Chờ công nhân kiểm tra và tải ảnh thực tế.',
+      },
+    ],
+    {
+      stepId: 'S1',
+      slotIndex: 3,
+      photoUrl: '/uploads/new.jpg',
+    },
+  );
+
+  assert.equal(result.found, true);
+  assert.deepEqual(result.updatedSteps[0].photoSlotsData, [
+    { slotIndex: 3, label: 'Slot 3', photoUrl: '/uploads/new.jpg' },
+  ]);
+  assert.deepEqual(result.updatedSteps[0].photos, [
+    { slotName: 'Slot 3', url: '/uploads/new.jpg', slotIndex: 3 },
+  ]);
+});
+
+test('returns found=false when no step matches the replace patch', () => {
+  const result = replacePhotoInStepResults(
+    [{ stepId: 'S1', status: 'PASS', note: 'ok' }],
+    { stepId: 'S2', slotIndex: 1, photoUrl: '/uploads/new.jpg' },
+  );
+  assert.equal(result.found, false);
+  assert.deepEqual(result.updatedSteps, [{ stepId: 'S1', status: 'PASS', note: 'ok' }]);
 });

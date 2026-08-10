@@ -214,6 +214,61 @@ export function attachUploadedPhotoToStepResults(stepResults: unknown, patch: Up
   return { found, updatedSteps };
 }
 
+export function replacePhotoInStepResults(stepResults: unknown, patch: EvidencePhotoPatch) {
+  const steps = Array.isArray(stepResults) ? stepResults : [];
+  const fields = evidencePhotoFields(patch);
+  if (!fields) return { found: false, updatedSteps: steps };
+  const { stepId, slotIndex, photoUrl, manualOverride, aiQualityStatus } = fields;
+  let found = false;
+
+  const updatedSteps = steps.map((step) => {
+    if (!step || typeof step !== 'object' || (step as { stepId?: unknown }).stepId !== stepId) return step;
+    found = true;
+    const current = step as Record<string, unknown>;
+    const existingSlots = Array.isArray(current.photoSlotsData) ? current.photoSlotsData : [];
+    let slotFound = false;
+    const photoSlotsData = existingSlots.map((slot) => {
+      if (!slot || typeof slot !== 'object' || Number((slot as { slotIndex?: unknown }).slotIndex) !== slotIndex) return slot;
+      slotFound = true;
+      return {
+        ...slot,
+        photoUrl,
+        ...(manualOverride ? { manualOverride: true } : {}),
+        ...(aiQualityStatus ? { aiQualityStatus } : {}),
+      };
+    });
+
+    if (!slotFound) {
+      photoSlotsData.push({
+        slotIndex,
+        label: `Slot ${slotIndex}`,
+        photoUrl,
+        ...(manualOverride ? { manualOverride: true } : {}),
+        ...(aiQualityStatus ? { aiQualityStatus } : {}),
+      });
+    }
+
+    const existingPhotos = Array.isArray(current.photos) ? current.photos : [];
+    const remainingPhotos = existingPhotos.filter((photo) =>
+      !(photo && typeof photo === 'object' && Number((photo as { slotIndex?: unknown }).slotIndex) === slotIndex),
+    );
+    const slotLabel = photoSlotsData.find((slot) => slot && typeof slot === 'object' && Number((slot as { slotIndex?: unknown }).slotIndex) === slotIndex)?.label;
+    const photos = [
+      ...remainingPhotos,
+      { url: photoUrl, slotName: typeof slotLabel === 'string' && slotLabel.trim() ? slotLabel : `Slot ${slotIndex}`, slotIndex },
+    ];
+
+    return {
+      ...current,
+      photoUrl: typeof current.photoUrl === 'string' && current.photoUrl.trim() ? current.photoUrl : photoUrl,
+      photoSlotsData,
+      photos,
+    };
+  });
+
+  return { found, updatedSteps };
+}
+
 export function attachEvidencePhotosToStepResults(stepResults: unknown, evidencePhotos: unknown) {
   const photos = Array.isArray(evidencePhotos) ? evidencePhotos : [];
   const hydratedSteps = photos.reduce((currentSteps, photo) => {
@@ -255,6 +310,7 @@ export function attachEvidencePhotosToStepResults(stepResults: unknown, evidence
       return [{
         url: fields.photoUrl,
         slotName: slotLabels.get(fields.slotIndex) || `Slot ${fields.slotIndex}`,
+        slotIndex: fields.slotIndex,
       }];
     });
 

@@ -301,6 +301,28 @@ export function createAdminApi(options: AdminApiOptions = {}) {
       return mapInspectionJob(row);
     },
 
+    async replaceJobStepPhoto(
+      jobId: string,
+      stepId: string,
+      slotIndex: number,
+      file: File,
+      options: { source?: 'CAMERA' | 'UPLOAD'; aspectRatio?: number } = {},
+    ): Promise<InspectionJob> {
+      const form = new FormData();
+      form.set('photo', file);
+      form.set('source', options.source || 'UPLOAD');
+      if (options.aspectRatio !== undefined && Number.isFinite(options.aspectRatio)) {
+        form.set('aspectRatio', String(options.aspectRatio));
+      }
+      const response = await fetchImpl(apiUrl(`/api/admin/jobs/${encodeURIComponent(jobId)}/step-results/${encodeURIComponent(stepId)}/slot/${slotIndex}/photo`), {
+        method: 'POST',
+        headers: { 'x-qc-admin-key': getAdminKey() },
+        body: form,
+      });
+      const row = await expectOk(response);
+      return mapInspectionJob(row);
+    },
+
     async moderateJobStep(
       jobId: string,
       stepId: string,

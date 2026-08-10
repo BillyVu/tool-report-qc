@@ -14,7 +14,7 @@ import { enqueuePhotoProcessing } from './outbox.js';
 import { enqueueGeminiAnalysis } from './geminiOutbox.js';
 import { toJsonbParam } from './jsonParam.js';
 import { serializeTemplateRow, templateDbParams } from './templates.js';
-import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, applyStepResultsUpdate, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs.js';
+import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, applyStepResultsUpdate, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, replacePhotoInStepResults, updateJobStatusSql } from './adminJobs.js';
 import { buildX530CustomerReport, applyX530SlotAspectRatios, isCustomerDocxTemplate } from './customerDocx.js';
 import { createPhotoTypeParams, serializePhotoTypeRow, updatePhotoTypeParams } from './photoTypes.js';
 import { DEFAULT_MIN_SHARPNESS_SCORE, inspectPhotoFile, isAspectRatio } from './photoQuality.js';
@@ -161,6 +161,51 @@ async function getHydratedJobById(jobId: string) {
   );
   if (!result.rowCount) return null;
   const row = result.rows[0];
+  return {
+    ...row,
+    step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
+    defectsFindingData: row.defects_finding_data || row.template_snapshot?.defectsFindingData || [],
+    packagingInfoData: row.packaging_info_data || row.template_snapshot?.packagingInfoData || {},
+    otherInfoData: row.other_info_data || row.template_snapshot?.otherInfoData || {},
+    evidence_photos: undefined,
+  };
+}
+
+async function getAdminJobDetailByExternalId(externalId: string) {
+  const jobs = await db.query(
+    `SELECT j.external_id, j.batch_number, j.product_code, j.product_name, j.template_id, j.status,
+            j.worker_id, j.worker_name, j.shift, j.line, j.created_at, j.updated_at, j.completed_at,
+            j.step_results, j.template_snapshot, j.admin_notes, j.export_count, j.last_exported_at,
+            j.defects_finding_data, j.packaging_info_data, j.other_info_data,
+            s.created_at AS session_created_at, s.expires_at AS session_expires_at, s.revoked_at AS session_revoked_at,
+            COALESCE(p.evidence_photos, '[]'::jsonb) AS evidence_photos
+       FROM inspection_jobs j
+       LEFT JOIN LATERAL (
+         SELECT created_at, expires_at, revoked_at
+           FROM worker_sessions
+          WHERE job_id = j.id AND revoked_at IS NULL
+          ORDER BY created_at DESC
+          LIMIT 1
+       ) s ON true
+       LEFT JOIN LATERAL (
+         SELECT jsonb_agg(
+                  jsonb_build_object(
+                    'stepId', ep.step_id,
+                    'slotIndex', ep.slot_index,
+                    'photoUrl', '/uploads/' || ep.storage_path,
+                    'manualOverride', ep.manual_override,
+                    'aiQualityStatus', ep.ai_quality_status
+                  )
+                  ORDER BY ep.step_id, ep.slot_index, ep.created_at
+                ) AS evidence_photos
+           FROM evidence_photos ep
+          WHERE ep.job_id = j.id
+       ) p ON true
+      WHERE j.external_id = $1`,
+    [externalId],
+  );
+  if (!jobs.rowCount) return null;
+  const row = jobs.rows[0];
   return {
     ...row,
     step_results: attachEvidencePhotosToStepResults(row.step_results, row.evidence_photos),
@@ -691,6 +736,120 @@ app.get('/api/admin/jobs/:jobId/photos/:storagePath', requireAdmin, async (req, 
   res.setHeader('Content-Type', photo.rows[0].mime_type);
   res.setHeader('Content-Disposition', `inline; filename="${photo.rows[0].original_filename || storagePath}"`);
   res.sendFile(filePath);
+});
+
+// Admin replaces a worker-submitted evidence photo for a specific step/slot.
+// The old evidence photo rows (and their files) are removed and a fresh photo is
+// stored as an admin manual override so the async quality pump never flips it.
+app.post('/api/admin/jobs/:jobId/step-results/:stepId/slot/:slotIndex/photo', requireAdmin, upload.single('photo'), async (req, res) => {
+  const jobId = String(req.params.jobId);
+  const stepId = String(req.params.stepId);
+  const slotIndex = Number(req.params.slotIndex);
+  if (!req.file) return res.status(400).json({ error: 'A JPEG, PNG, or WEBP photo is required.' });
+  if (!stepId || !Number.isInteger(slotIndex) || slotIndex < 1) {
+    await fs.unlink(req.file.path).catch(() => undefined);
+    return res.status(400).json({ error: 'stepId and an integer slotIndex are required.' });
+  }
+  const source = String(req.body?.source || 'UPLOAD');
+  if (source !== 'CAMERA' && source !== 'UPLOAD') {
+    await fs.unlink(req.file.path).catch(() => undefined);
+    return res.status(400).json({ error: 'source must be CAMERA or UPLOAD.' });
+  }
+
+  const job = await db.query(
+    `SELECT j.id, j.template_snapshot
+       FROM inspection_jobs j
+      WHERE j.external_id = $1`,
+    [jobId],
+  );
+  if (!job.rowCount) {
+    await fs.unlink(req.file.path).catch(() => undefined);
+    return res.status(404).json({ error: 'Job not found.' });
+  }
+  const stepDef = Array.isArray(job.rows[0].template_snapshot?.steps)
+    ? job.rows[0].template_snapshot.steps.find((item: any) => item?.stepId === stepId)
+    : undefined;
+  if (!stepDef) {
+    await fs.unlink(req.file.path).catch(() => undefined);
+    return res.status(404).json({ error: 'Step not found in this job template.' });
+  }
+  const slotDef = Array.isArray(stepDef.photoSlotConfigs)
+    ? stepDef.photoSlotConfigs.find((item: any) => Number(item?.slotIndex) === slotIndex)
+    : undefined;
+  const captureFrame = slotDef?.captureFrame || 'RECTANGLE';
+  if (captureFrame !== 'RECTANGLE' && captureFrame !== 'SQUARE') {
+    await fs.unlink(req.file.path).catch(() => undefined);
+    return res.status(400).json({ error: 'captureFrame must be RECTANGLE or SQUARE.' });
+  }
+  const requestedAspectRatio = req.body?.aspectRatio !== undefined && req.body?.aspectRatio !== null && req.body?.aspectRatio !== ''
+    ? Number(req.body.aspectRatio)
+    : (slotDef?.aspectRatio ?? NaN);
+  const targetAspect = Number.isFinite(requestedAspectRatio) && requestedAspectRatio > 0 && requestedAspectRatio < 5
+    ? requestedAspectRatio
+    : (captureFrame === 'SQUARE' ? 1 : 4 / 3);
+
+  try {
+    const inspection = await inspectPhotoFile(req.file.path);
+    const minSharpness = Number(process.env.QC_MIN_SHARPNESS_SCORE || DEFAULT_MIN_SHARPNESS_SCORE);
+    if (!isAspectRatio(inspection.width, inspection.height, targetAspect)) {
+      await fs.unlink(req.file.path);
+      const frameLabel = captureFrame === 'SQUARE' ? '1:1' : '4:3';
+      return res.status(422).json({ error: `Ảnh cần được căn chỉnh theo khung ${frameLabel} trước khi lưu.` });
+    }
+    if (inspection.sharpnessScore < minSharpness) {
+      await fs.unlink(req.file.path);
+      return res.status(422).json({ error: 'Ảnh bị mờ hoặc thiếu chi tiết. Vui lòng chọn ảnh rõ nét hơn.', sharpnessScore: inspection.sharpnessScore });
+    }
+
+    const data = await fs.readFile(req.file.path);
+    const sha256 = createHash('sha256').update(data).digest('hex');
+
+    const oldPhotos = await db.query(
+      `SELECT storage_path FROM evidence_photos WHERE job_id = $1 AND step_id = $2 AND slot_index = $3`,
+      [job.rows[0].id, stepId, slotIndex],
+    );
+
+    await db.query(
+      `DELETE FROM evidence_photos WHERE job_id = $1 AND step_id = $2 AND slot_index = $3`,
+      [job.rows[0].id, stepId, slotIndex],
+    );
+
+    const photo = await db.query(
+      `INSERT INTO evidence_photos (job_id, session_id, step_id, slot_index, storage_path, original_filename, mime_type, byte_size, sha256, capture_source, crop_ratio, sharpness_score, ai_quality_status, ai_quality_message, manual_override)
+       VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'UNAVAILABLE', $12, true)
+       RETURNING id, step_id, slot_index, mime_type, byte_size, sha256, created_at, manual_override, ai_quality_status`,
+      [job.rows[0].id, stepId, slotIndex, req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256, source, targetAspect, inspection.sharpnessScore, `${botName} đã kiểm tra ảnh thay thế do QC Admin thực hiện.`],
+    );
+
+    const photoUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
+    await applyStepResultsUpdate(job.rows[0].id, (currentStepResults) =>
+      replacePhotoInStepResults(currentStepResults, {
+        stepId,
+        slotIndex,
+        photoUrl,
+        manualOverride: true,
+        aiQualityStatus: 'UNAVAILABLE',
+      }),
+    );
+
+    await enqueuePhotoProcessing(photo.rows[0].id);
+    await db.query(
+      `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
+       VALUES ($1, 'ADMIN', 'QC Admin', 'PHOTO_REPLACED', $2)`,
+      [job.rows[0].id, toJsonbParam({ stepId, slotIndex, photoId: photo.rows[0].id, source })],
+    );
+
+    for (const old of oldPhotos.rows) {
+      const oldPath = join(uploadsDirectory, String(old.storage_path));
+      await fs.unlink(oldPath).catch(() => undefined);
+    }
+
+    const hydrated = await getAdminJobDetailByExternalId(jobId);
+    res.json(hydrated);
+  } catch (error) {
+    await fs.unlink(req.file.path).catch(() => undefined);
+    throw error;
+  }
 });
 
 app.get('/api/admin/kpis', requireAdmin, async (_req, res) => {
