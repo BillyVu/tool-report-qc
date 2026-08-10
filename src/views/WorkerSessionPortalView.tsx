@@ -729,11 +729,11 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     }
   };
 
-  const handleCapturedPhoto = async (file: File, sharpnessScore: number) => {
+  const handleCapturedPhoto = async (file: File, sharpnessScore: number, outputAspect?: number) => {
     const target = captureTarget;
     if (!target) return;
     setCaptureTarget(null);
-    await handlePhotoUploadForSlot(target.stepId, target.slotIndex, file, target.source, target.captureFrame, sharpnessScore, false, target.aspectRatio);
+    await handlePhotoUploadForSlot(target.stepId, target.slotIndex, file, target.source, target.captureFrame, sharpnessScore, false, outputAspect ?? target.aspectRatio);
   };
 
   // Handles Note or Text change
@@ -1736,8 +1736,8 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           slotLabel={captureTarget.slotLabel}
           initialError={captureTarget.error}
           onClose={() => setCaptureTarget(null)}
-          onComplete={(file, sharpnessScore) => {
-            void handleCapturedPhoto(file, sharpnessScore).catch((error) => {
+          onComplete={(file, sharpnessScore, outputAspect) => {
+            void handleCapturedPhoto(file, sharpnessScore, outputAspect).catch((error) => {
               alert(error instanceof Error ? error.message : 'Không thể tải ảnh lên hệ thống QC.');
             });
           }}
