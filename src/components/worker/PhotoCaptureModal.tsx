@@ -10,6 +10,7 @@ interface PhotoCaptureModalProps {
   key?: string;
   mode: CaptureMode;
   frame: CaptureFrame;
+  aspectRatio?: number;
   selectedFile?: File;
   slotLabel: string;
   initialError?: string;
@@ -17,7 +18,7 @@ interface PhotoCaptureModalProps {
   onComplete: (file: File, sharpnessScore: number) => void;
 }
 
-export function PhotoCaptureModal({ mode, frame, selectedFile, slotLabel, initialError, onClose, onComplete }: PhotoCaptureModalProps) {
+export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, slotLabel, initialError, onClose, onComplete }: PhotoCaptureModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [source, setSource] = useState<File | null>(selectedFile || null);
@@ -29,8 +30,12 @@ export function PhotoCaptureModal({ mode, frame, selectedFile, slotLabel, initia
   const [isStartingCamera, setIsStartingCamera] = useState(mode === 'CAMERA' && !selectedFile);
   const [isPreparing, setIsPreparing] = useState(false);
   const [sharpnessError, setSharpnessError] = useState(initialError || '');
-  const aspect = frame === 'SQUARE' ? 1 : 4 / 3;
-  const frameLabel = frame === 'SQUARE' ? 'Vuông 1:1' : 'Chữ nhật 4:3';
+  const aspect = aspectRatio && Number.isFinite(aspectRatio) && aspectRatio > 0
+    ? aspectRatio
+    : frame === 'SQUARE' ? 1 : 4 / 3;
+  const frameLabel = aspectRatio && Number.isFinite(aspectRatio) && aspectRatio > 0
+    ? `tỉ lệ ${Math.round(aspectRatio * 100)}%`
+    : frame === 'SQUARE' ? 'Vuông 1:1' : 'Chữ nhật 4:3';
 
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());

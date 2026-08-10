@@ -7,21 +7,23 @@ import { join } from 'node:path';
 import express, { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { WebSocketServer } from 'ws';
-import { db } from './db.js';
+import { createDbClient, db } from './db.js';
 import { createSessionToken, hashSessionToken, verifySessionToken } from './session.js';
 import { imageUploadFilter } from './uploads.js';
 import { enqueuePhotoProcessing } from './outbox.js';
 import { enqueueGeminiAnalysis } from './geminiOutbox.js';
 import { toJsonbParam } from './jsonParam.js';
 import { serializeTemplateRow, templateDbParams } from './templates.js';
-import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs.js';
-import { buildX530CustomerReport, isCustomerDocxTemplate } from './customerDocx.js';
+import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, applyStepResultsUpdate, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs.js';
+import { buildX530CustomerReport, applyX530SlotAspectRatios, isCustomerDocxTemplate } from './customerDocx.js';
 import { createPhotoTypeParams, serializePhotoTypeRow, updatePhotoTypeParams } from './photoTypes.js';
-import { DEFAULT_MIN_SHARPNESS_SCORE, inspectPhotoFile, isFourByThree, isSquare, validatePhotoWithAi } from './photoQuality.js';
+import { DEFAULT_MIN_SHARPNESS_SCORE, inspectPhotoFile, isAspectRatio } from './photoQuality.js';
+import { enqueuePhotoQualityCheck, runPhotoQualityJobs } from './photoQualityJobs.js';
 import { inferPhotoTypeFromContext } from './photoTypeInference.js';
 import { buildAnalysisPrompt, buildQualityPrompt, getVeroPromptProfile, isPromptVerified, listVeroPromptProfiles, promptHash, updateVeroPromptInstruction, VERO_PROMPT_KEYS, VeroPromptKey } from './veroPrompts.js';
 import { defaultOutputSchemaForMode, mapVerificationModeToDetectType, normalizeOutputSchema, normalizeSchemaVersion, normalizeVerificationMode, serializeAnalysisRow } from './veroAnalysis.js';
 import { workerSessionRealtime } from './workerRealtime.js';
+import { startRealtimeRelay } from './realtimeBridge.js';
 
 const port = Number(process.env.PORT || 3000);
 const uploadsDirectory = process.env.UPLOADS_DIR || '/srv/tool-report-qc/uploads';
@@ -108,6 +110,7 @@ async function getSession(jobId: string, token: string) {
                 ) AS evidence_photos
            FROM evidence_photos ep
           WHERE ep.job_id = j.id
+            AND ep.ai_quality_status IS DISTINCT FROM 'REJECTED'
        ) p ON true
       WHERE j.external_id = $1 AND s.revoked_at IS NULL`,
     [jobId],
@@ -126,7 +129,7 @@ function serializeWorkerSession(session: any) {
       packagingInfoData: session.packaging_info_data || session.template_snapshot?.packagingInfoData || {},
       otherInfoData: session.other_info_data || session.template_snapshot?.otherInfoData || {},
     },
-    template: session.template_snapshot,
+    template: applyX530SlotAspectRatios(session.template_snapshot),
     expiresAt: session.expires_at,
     checkedInAt: session.checked_in_at,
     botName,
@@ -151,6 +154,7 @@ async function getHydratedJobById(jobId: string) {
                 ) AS evidence_photos
            FROM evidence_photos ep
           WHERE ep.job_id = j.id
+            AND ep.ai_quality_status IS DISTINCT FROM 'REJECTED'
        ) p ON true
       WHERE j.id = $1`,
     [jobId],
@@ -635,7 +639,7 @@ app.get('/api/admin/jobs/:jobId/customer-report.docx', requireAdmin, async (req,
                   'storage_path', ep.storage_path,
                   'created_at', ep.created_at
                 ) ORDER BY ep.step_id, ep.slot_index, ep.created_at
-              ) FILTER (WHERE ep.id IS NOT NULL),
+            ) FILTER (WHERE ep.id IS NOT NULL AND ep.ai_quality_status IS DISTINCT FROM 'REJECTED'),
               '[]'::jsonb
             ) AS evidence_photos
        FROM inspection_jobs j
@@ -753,26 +757,25 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/note', requireAdmin, asyn
   const note = String(req.body?.note ?? '');
   const job = await db.query(`SELECT id, step_results FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
   if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
-  const stepResults = Array.isArray(job.rows[0].step_results) ? job.rows[0].step_results : [];
   let oldValue = '';
-  let found = false;
-  const updatedSteps = stepResults.map((step) => {
-    if (step?.stepId !== req.params.stepId) return step;
-    found = true;
-    oldValue = step.note || '';
-    return { ...step, originalNote: step.originalNote || step.note || '', note, editedByAdmin: true };
+  const { found, row } = await applyStepResultsUpdate(job.rows[0].id, (currentStepResults) => {
+    const stepResults = Array.isArray(currentStepResults) ? currentStepResults : [];
+    let localFound = false;
+    const updatedSteps = stepResults.map((step) => {
+      if (step?.stepId !== req.params.stepId) return step;
+      localFound = true;
+      oldValue = step.note || '';
+      return { ...step, originalNote: step.originalNote || step.note || '', note, editedByAdmin: true };
+    });
+    return { found: localFound, updatedSteps };
   });
   if (!found) return res.status(404).json({ error: 'Step result not found.' });
-  const result = await db.query(
-    `UPDATE inspection_jobs SET step_results = $2, updated_at = now(), version = version + 1 WHERE external_id = $1 RETURNING *`,
-    [req.params.jobId, toJsonbParam(updatedSteps)],
-  );
   await db.query(
     `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
      VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STEP_NOTE_UPDATED', $2)`,
     [job.rows[0].id, toJsonbParam({ fieldChanged: `Step ${req.params.stepId} Note`, oldValue, newValue: note })],
   );
-  res.json(result.rows[0]);
+  res.json(row);
 });
 
 app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin, async (req, res) => {
@@ -800,18 +803,19 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin
     }
   }
 
-  const { found, previousStatus, updatedSteps } = moderateStepResults(
-    job.rows[0].step_results,
-    req.params.stepId,
-    moderationStatus as 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED',
-    adminReviewNote,
-  );
+  let previousStatus = '';
+  const { found, row } = await applyStepResultsUpdate(job.rows[0].id, (currentStepResults) => {
+    const result = moderateStepResults(
+      currentStepResults,
+      req.params.stepId,
+      moderationStatus as 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED',
+      adminReviewNote,
+    );
+    previousStatus = result.previousStatus;
+    return { found: result.found, updatedSteps: result.updatedSteps };
+  });
   if (!found) return res.status(404).json({ error: 'Step result not found.' });
 
-  const result = await db.query(
-    `UPDATE inspection_jobs SET step_results = $2, updated_at = now(), version = version + 1 WHERE external_id = $1 RETURNING *`,
-    [req.params.jobId, toJsonbParam(updatedSteps)],
-  );
   await db.query(
     `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
      VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STEP_MODERATED', $2)`,
@@ -825,7 +829,7 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin
       }),
     ],
   );
-  res.json(result.rows[0]);
+  res.json(row);
 });
 
 app.post('/api/admin/jobs/:jobId/exports', requireAdmin, async (req, res) => {
@@ -925,7 +929,7 @@ app.post('/api/worker-sessions/:jobId/check-in', workerSessionGuard, async (req,
 app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single('photo'), async (req, res) => {
   const session = res.locals.workerSession;
   if (!req.file) return res.status(400).json({ error: 'A JPEG, PNG, or WEBP photo is required.' });
-  const { stepId, slotIndex, source, manualOverride, captureFrame } = req.body;
+  const { stepId, slotIndex, source, manualOverride, captureFrame, aspectRatio } = req.body;
   if (!stepId || !Number.isInteger(Number(slotIndex))) {
     await fs.unlink(req.file.path);
     return res.status(400).json({ error: 'stepId and integer slotIndex are required.' });
@@ -939,6 +943,12 @@ app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single
     await fs.unlink(req.file.path);
     return res.status(400).json({ error: 'captureFrame must be RECTANGLE or SQUARE.' });
   }
+  const parsedAspectRatio = aspectRatio !== undefined && aspectRatio !== null && aspectRatio !== ''
+    ? Number(aspectRatio)
+    : NaN;
+  const requestedAspectRatio = Number.isFinite(parsedAspectRatio) && parsedAspectRatio > 0 && parsedAspectRatio < 5
+    ? parsedAspectRatio
+    : null;
 
   workerSessionRealtime.publish(req.params.jobId, {
     type: 'PHOTO_RECEIVED',
@@ -951,70 +961,67 @@ app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single
     const photoContext = await resolvePhotoPromptContext(session.template_snapshot, stepId, Number(slotIndex));
     const qualityProfile = await getVeroPromptProfile('PHOTO_QUALITY_GATE');
     const qualityPrompt = buildQualityPrompt(qualityProfile, photoContext);
+    const qualityPromptHash = promptHash(qualityPrompt);
     const inspection = await inspectPhotoFile(req.file.path);
     const minSharpness = Number(process.env.QC_MIN_SHARPNESS_SCORE || DEFAULT_MIN_SHARPNESS_SCORE);
-    const hasExpectedAspect = normalizedCaptureFrame === 'SQUARE'
-      ? isSquare(inspection.width, inspection.height)
-      : isFourByThree(inspection.width, inspection.height);
+    const targetAspect = requestedAspectRatio ?? (normalizedCaptureFrame === 'SQUARE' ? 1 : 4 / 3);
+    const hasExpectedAspect = isAspectRatio(inspection.width, inspection.height, targetAspect);
     if (!hasExpectedAspect) {
       await fs.unlink(req.file.path);
-      return res.status(422).json({ error: `Ảnh cần được căn chỉnh theo khung ${normalizedCaptureFrame === 'SQUARE' ? '1:1' : '4:3'} trước khi tải lên.` });
+      const frameLabel = requestedAspectRatio
+        ? `tỉ lệ ${Math.round(requestedAspectRatio * 100)}%`
+        : normalizedCaptureFrame === 'SQUARE' ? '1:1' : '4:3';
+      return res.status(422).json({ error: `Ảnh cần được căn chỉnh theo khung ${frameLabel} trước khi tải lên.` });
     }
     if (inspection.sharpnessScore < minSharpness) {
       await fs.unlink(req.file.path);
       return res.status(422).json({ error: 'Ảnh bị mờ hoặc thiếu chi tiết. Vui lòng căn và chụp lại.', sharpnessScore: inspection.sharpnessScore });
     }
 
-    const aiQuality = await validatePhotoWithAi(req.file.path, req.file.mimetype, qualityPrompt);
     const isManualOverride = manualOverride === 'true';
-    if (aiQuality.status === 'REJECTED') {
-      await fs.unlink(req.file.path);
-      await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, 'PHOTO_QUALITY_REJECTED', $3)`, [session.job_id, session.worker_name || 'Worker', toJsonbParam({ stepId, slotIndex: Number(slotIndex), source, reason: aiQuality.message })]);
-      return res.status(422).json({ error: aiQuality.message, qualityStatus: 'REJECTED' });
-    }
-    if (aiQuality.status === 'UNAVAILABLE' && !isManualOverride) {
-      await fs.unlink(req.file.path);
-      return res.status(503).json({ error: `${botName} chưa thể kiểm tra ảnh. Công nhân có thể căn lại ảnh và xác nhận tải thủ công.`, qualityStatus: 'UNAVAILABLE', qualityMessage: aiQuality.message, manualOverrideAvailable: true });
-    }
+    const aiQualityStatus = isManualOverride ? 'UNAVAILABLE' : 'PENDING';
 
     const data = await fs.readFile(req.file.path);
     const sha256 = createHash('sha256').update(data).digest('hex');
     const photo = await db.query(
       `INSERT INTO evidence_photos (job_id, session_id, step_id, slot_index, storage_path, original_filename, mime_type, byte_size, sha256, capture_source, crop_ratio, sharpness_score, ai_quality_status, ai_quality_message, manual_override, photo_type, photo_label, photo_prompt_instruction, quality_prompt_revision, quality_prompt_hash)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id, step_id, slot_index, mime_type, byte_size, sha256, created_at, manual_override, ai_quality_status`,
-      [session.job_id, session.id, stepId, Number(slotIndex), req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256, source, normalizedCaptureFrame === 'SQUARE' ? 1 : 4 / 3, inspection.sharpnessScore, aiQuality.status, aiQuality.message, aiQuality.status === 'UNAVAILABLE' && isManualOverride, photoContext.photoType, photoContext.photoLabel, photoContext.photoInstruction, qualityProfile.revision, promptHash(qualityPrompt)],
+      [session.job_id, session.id, stepId, Number(slotIndex), req.file.filename, req.file.originalname, req.file.mimetype, req.file.size, sha256, source, targetAspect, inspection.sharpnessScore, aiQualityStatus, isManualOverride ? `${botName} chưa thể kiểm tra ảnh. Công nhân xác nhận tải thủ công.` : null, isManualOverride, photoContext.photoType, photoContext.photoLabel, photoContext.photoInstruction, qualityProfile.revision, qualityPromptHash],
     );
     await db.query(
       `UPDATE evidence_photos
           SET photo_verification_mode = $2,
               photo_schema_version = $3,
-              photo_output_schema = $4,
-              quality_reason_code = $5,
-              quality_result_json = $6
+              photo_output_schema = $4
         WHERE id = $1`,
-      [photo.rows[0].id, photoContext.verificationMode, photoContext.schemaVersion, toJsonbParam(photoContext.outputSchema), aiQuality.reasonCode, aiQuality.resultJson ? toJsonbParam(aiQuality.resultJson) : null],
+      [photo.rows[0].id, photoContext.verificationMode, photoContext.schemaVersion, toJsonbParam(photoContext.outputSchema)],
     );
     const photoUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
-    const { found, updatedSteps } = attachUploadedPhotoToStepResults(session.step_results, {
-      stepId,
-      slotIndex: Number(slotIndex),
-      photoUrl,
-      manualOverride: photo.rows[0].manual_override,
-      aiQualityStatus: photo.rows[0].ai_quality_status,
-    });
-    if (found) {
-      await db.query(
-        `UPDATE inspection_jobs
-            SET step_results = $1,
-                updated_at = now(),
-                version = version + 1
-          WHERE id = $2`,
-        [toJsonbParam(updatedSteps), session.job_id],
-      );
-    }
+    await applyStepResultsUpdate(session.job_id, (currentStepResults) =>
+      attachUploadedPhotoToStepResults(currentStepResults, {
+        stepId,
+        slotIndex: Number(slotIndex),
+        photoUrl,
+        manualOverride: photo.rows[0].manual_override,
+        aiQualityStatus: photo.rows[0].ai_quality_status,
+      }),
+    );
     await enqueuePhotoProcessing(photo.rows[0].id);
+    if (!isManualOverride) {
+      await enqueuePhotoQualityCheck({
+        photoId: photo.rows[0].id,
+        jobId: session.job_id,
+        stepId,
+        slotIndex: Number(slotIndex),
+        mimeType: req.file.mimetype,
+        storagePath: req.file.filename,
+        prompt: qualityPrompt,
+        promptHash: qualityPromptHash,
+        profileRevision: qualityProfile.revision,
+      });
+    }
     const action = photo.rows[0].manual_override ? 'PHOTO_UPLOADED_MANUAL_OVERRIDE' : 'PHOTO_UPLOADED';
-    await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, $3, $4)`, [session.job_id, session.worker_name || 'Worker', action, toJsonbParam({ photoId: photo.rows[0].id, stepId, slotIndex: Number(slotIndex), source, sharpnessScore: inspection.sharpnessScore, aiQualityStatus: aiQuality.status, aiQualityMessage: aiQuality.message })]);
+    await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'WORKER', $2, $3, $4)`, [session.job_id, session.worker_name || 'Worker', action, toJsonbParam({ photoId: photo.rows[0].id, stepId, slotIndex: Number(slotIndex), source, sharpnessScore: inspection.sharpnessScore, aiQualityStatus, isManualOverride })]);
     workerSessionRealtime.publish(req.params.jobId, {
       type: 'PHOTO_SAVED',
       photoId: photo.rows[0].id,
@@ -1023,7 +1030,7 @@ app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single
       photoUrl,
       manualOverride: photo.rows[0].manual_override,
       aiQualityStatus: photo.rows[0].ai_quality_status,
-      message: 'Ảnh đã được lưu trên server.',
+      message: aiQualityStatus === 'PENDING' ? 'Ảnh đã lưu. Đang kiểm tra chất lượng...' : 'Ảnh đã được lưu trên server.',
     });
     res.status(201).json({
       ...photo.rows[0],
@@ -1035,6 +1042,11 @@ app.post('/api/worker-sessions/:jobId/photos', workerSessionGuard, upload.single
     await fs.unlink(req.file.path).catch(() => undefined);
     throw error;
   }
+});
+
+app.post('/api/worker-sessions/:jobId/section-photos', workerSessionGuard, upload.single('photo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'A JPEG, PNG, or WEBP photo is required.' });
+  res.status(201).json({ photoUrl: `/uploads/${encodeURIComponent(req.file.filename)}` });
 });
 
 app.post('/api/worker-sessions/:jobId/photos/:photoId/analyze', workerSessionGuard, async (req, res) => {
@@ -1060,13 +1072,13 @@ app.post('/api/worker-sessions/:jobId/photos/:photoId/analyze', workerSessionGua
     photoInstruction: photo.rows[0].photo_prompt_instruction,
   });
   const analysisPromptHash = promptHash(analysisPrompt);
-  const existing = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = $4`, [photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash]);
+  const existing = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_hash = $4`, [photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash]);
   if (existing.rowCount) return res.status(200).json(serializeAnalysisRow(existing.rows[0]));
   try {
     const analysis = await db.query(
       `INSERT INTO gemini_analyses (photo_id, source_sha256, detect_type, model, prompt_version, prompt_profile_key, prompt_revision, prompt_instruction, prompt_hash, photo_type, photo_label, photo_prompt_instruction, verification_mode, schema_version, output_schema, validation_status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'PENDING') RETURNING *`,
-      [photo.rows[0].id, photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash, 'PHOTO_ANALYSIS', analysisProfile.revision, analysisPrompt, analysisPromptHash, photo.rows[0].photo_type, photo.rows[0].photo_label, photo.rows[0].photo_prompt_instruction, verificationMode, schemaVersion, toJsonbParam(outputSchema)],
+      [photo.rows[0].id, photo.rows[0].sha256, detectType, geminiModel, `v${analysisProfile.revision}`, 'PHOTO_ANALYSIS', analysisProfile.revision, analysisPrompt, analysisPromptHash, photo.rows[0].photo_type, photo.rows[0].photo_label, photo.rows[0].photo_prompt_instruction, verificationMode, schemaVersion, toJsonbParam(outputSchema)],
     );
     await enqueueGeminiAnalysis(analysis.rows[0].id, photo.rows[0].id);
     workerSessionRealtime.publish(req.params.jobId, {
@@ -1079,7 +1091,7 @@ app.post('/api/worker-sessions/:jobId/photos/:photoId/analyze', workerSessionGua
     res.status(202).json(serializeAnalysisRow(analysis.rows[0]));
   } catch (error: any) {
     if (error?.code !== '23505') throw error;
-    const concurrent = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_version = $4`, [photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash]);
+    const concurrent = await db.query(`SELECT * FROM gemini_analyses WHERE source_sha256 = $1 AND detect_type = $2 AND model = $3 AND prompt_hash = $4`, [photo.rows[0].sha256, detectType, geminiModel, analysisPromptHash]);
     res.status(200).json(serializeAnalysisRow(concurrent.rows[0]));
   }
 });
@@ -1176,6 +1188,21 @@ app.use((error: any, _req: Request, res: Response, _next: NextFunction) => {
 
 const httpServer = createServer(app);
 const workerSessionWebSocket = new WebSocketServer({ noServer: true });
+
+startRealtimeRelay({
+  createClient: () => createDbClient(),
+  onEvent: (jobId, event) => workerSessionRealtime.publish(jobId, event),
+}).then(() => console.log('Worker session realtime relay listening'))
+  .catch((error) => console.error('Worker session realtime relay failed:', error));
+
+const runPhotoQualityPump = () => {
+  runPhotoQualityJobs({
+    uploadsDirectory,
+    onPublish: (jobId, event) => workerSessionRealtime.publish(jobId, event),
+  }).catch((error) => console.error('Photo quality pump failed:', error));
+};
+runPhotoQualityPump();
+setInterval(runPhotoQualityPump, 3_000);
 
 httpServer.on('upgrade', (request, socket, head) => {
   const requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);

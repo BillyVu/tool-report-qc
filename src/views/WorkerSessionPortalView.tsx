@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   CheckCircle2, 
   XCircle, 
@@ -32,6 +32,7 @@ import { getDeviceMacAddress, getDeviceInfo } from '../utils/deviceTracker';
 import { usePhotoTypes } from '../hooks/usePhotoTypes';
 import { PhotoCaptureModal } from '../components/worker/PhotoCaptureModal';
 import { VeroBrand } from '../components/branding/VeroBrand';
+import { overallSummary, stepPhotoProgress, stepRailStatus, stepRailStatusLabel } from '../utils/portalSummary';
 
 type PhotoSource = 'CAMERA' | 'UPLOAD';
 
@@ -41,8 +42,24 @@ interface CaptureTarget {
   slotLabel: string;
   source: PhotoSource;
   captureFrame: CaptureFrame;
+  aspectRatio?: number;
   selectedFile?: File;
   error?: string;
+}
+
+type SectionPhotoField = 'cartonPhotos' | 'devicePhotos' | 'barcodePhotos';
+
+interface SectionCaptureTarget {
+  source: PhotoSource;
+  section: 'DEFECT' | 'PACKAGING' | 'OTHER';
+  slotLabel: string;
+  defectId?: string;
+  field?: SectionPhotoField;
+  selectedFile?: File;
+}
+
+function sectionUploadKey(target: Pick<SectionCaptureTarget, 'section' | 'defectId' | 'field' | 'slotLabel'>): string {
+  return target.section === 'DEFECT' ? `DEFECT:${target.defectId}` : `${target.section}:${target.field || ''}`;
 }
 
 type SlotUploadStatus = 'UPLOADING' | 'SAVED' | 'ACTION_REQUIRED' | 'ERROR';
@@ -53,13 +70,15 @@ interface SlotUploadState {
 }
 
 interface WorkerSessionRealtimeEvent {
-  type: 'READY' | 'PHOTO_RECEIVED' | 'PHOTO_SAVED' | 'ANALYSIS_QUEUED' | 'ANALYSIS_COMPLETED' | 'ANALYSIS_FAILED';
+  type: 'READY' | 'PHOTO_RECEIVED' | 'PHOTO_SAVED' | 'ANALYSIS_QUEUED' | 'ANALYSIS_COMPLETED' | 'ANALYSIS_FAILED' | 'PHOTO_QUALITY_RESULT';
   photoId?: string;
   stepId?: string;
   slotIndex?: number;
   photoUrl?: string;
   manualOverride?: boolean;
-  aiQualityStatus?: 'APPROVED' | 'UNAVAILABLE';
+  aiQualityStatus?: 'APPROVED' | 'REJECTED' | 'UNAVAILABLE' | 'PENDING';
+  status?: 'APPROVED' | 'REJECTED' | 'UNAVAILABLE';
+  manualOverrideAvailable?: boolean;
   summaryText?: string;
   resultJson?: Record<string, unknown>;
   message?: string;
@@ -71,7 +90,7 @@ function applyUploadedPhoto(
   slotIndex: number,
   photoUrl: string,
   manualOverride?: boolean,
-  aiQualityStatus?: 'APPROVED' | 'UNAVAILABLE',
+  aiQualityStatus?: 'APPROVED' | 'REJECTED' | 'UNAVAILABLE' | 'PENDING' | 'NOT_CHECKED',
 ) {
   return results.map((stepResult) => {
     if (stepResult.stepId !== stepId) return stepResult;
@@ -111,6 +130,46 @@ function applyAnalysisSummary(
       aiDetectStatus,
     };
   });
+}
+
+function SectionPhotoPicker({ uploading, onCamera, onFile }: { uploading: boolean; slotLabel: string; onCamera: () => void; onFile: (file: File) => void }) {
+  if (uploading) {
+    return (
+      <div className="w-16 h-16 rounded-lg border border-slate-700 flex items-center justify-center">
+        <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
+      </div>
+    );
+  }
+  return (
+    <div className="flex gap-1.5 items-center">
+      <button
+        type="button"
+        onClick={onCamera}
+        className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors"
+        title="Chụp ảnh"
+      >
+        <Camera className="w-4 h-4" />
+        <span className="text-[9px] mt-1 font-bold">Chụp</span>
+      </button>
+      <label
+        className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors"
+        title="Tải ảnh"
+      >
+        <Upload className="w-4 h-4" />
+        <span className="text-[9px] mt-1 font-bold">Tải ảnh</span>
+        <input
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onFile(file);
+            e.currentTarget.value = '';
+          }}
+        />
+      </label>
+    </div>
+  );
 }
 
 interface WorkerSessionPortalViewProps {
@@ -159,9 +218,15 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   const [manualOverride, setManualOverride] = useState<{ target: CaptureTarget; file: File; sharpnessScore: number; message: string } | null>(null);
   const [uploadingSlotKey, setUploadingSlotKey] = useState<string | null>(null);
   const [slotUploadStates, setSlotUploadStates] = useState<Record<string, SlotUploadState>>({});
+  const [sectionCaptureTarget, setSectionCaptureTarget] = useState<SectionCaptureTarget | null>(null);
+  const [sectionUploadingKey, setSectionUploadingKey] = useState<string | null>(null);
+  const [isCheckingIn, setIsCheckingIn] = useState(false);
+  const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [workerNotice, setWorkerNotice] = useState('');
   const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
   const botName = sessionData?.botName || 'Vero';
+
+  const pendingOverrideFiles = useRef<Record<string, { target: CaptureTarget; file: File; sharpnessScore: number; photoId?: string }>>({});
 
   // New Sections State
   const [activeWorkerTab, setActiveWorkerTab] = useState<'STEPS' | 'DEFECTS' | 'PACKAGING' | 'OTHER'>('STEPS');
@@ -206,6 +271,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           label: cfg.label,
           photoType: cfg.photoType,
           captureFrame: cfg.captureFrame || 'RECTANGLE',
+          aspectRatio: cfg.aspectRatio,
           photoUrl: undefined
         }));
 
@@ -310,6 +376,39 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
         setWorkerNotice(event.message || `${botName} chưa thể phân tích ảnh này.`);
         return;
       }
+      if (event.type === 'PHOTO_QUALITY_RESULT' && event.stepId && event.slotIndex && event.photoUrl && event.status) {
+        const slotKey = `${event.stepId}:${event.slotIndex}`;
+        const pending = pendingOverrideFiles.current[slotKey];
+        if (pending?.photoId && event.photoId && pending.photoId !== event.photoId) return;
+        if (event.status === 'UNAVAILABLE' && event.manualOverrideAvailable && pending) {
+          setSlotUploadStates((previous) => ({
+            ...previous,
+            [slotKey]: { status: 'ACTION_REQUIRED', message: 'Cần xác nhận tải ảnh thủ công.' },
+          }));
+          setManualOverride({
+            target: pending.target,
+            file: pending.file,
+            sharpnessScore: pending.sharpnessScore,
+            message: event.message || `${botName} chưa thể kiểm tra ảnh.`,
+          });
+          return;
+        }
+        if (event.status === 'REJECTED') {
+          setStepResults((previous) => applyUploadedPhoto(previous, event.stepId!, event.slotIndex!, event.photoUrl!, false, 'REJECTED'));
+          setSlotUploadStates((previous) => ({
+            ...previous,
+            [slotKey]: { status: 'ERROR', message: event.message || 'Ảnh chưa đạt yêu cầu. Hãy căn và chụp lại.' },
+          }));
+          setWorkerNotice(event.message || 'Ảnh chưa đạt yêu cầu. Hãy chụp lại.');
+          return;
+        }
+        setStepResults((previous) => applyUploadedPhoto(previous, event.stepId!, event.slotIndex!, event.photoUrl!, false, event.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'APPROVED'));
+        setSlotUploadStates((previous) => ({
+          ...previous,
+          [slotKey]: { status: 'SAVED', message: event.message || 'Ảnh đạt yêu cầu.' },
+        }));
+        return;
+      }
       if (event.type !== 'PHOTO_SAVED' || !event.stepId || !event.slotIndex || !event.photoUrl) return;
 
       const slotKey = `${event.stepId}:${event.slotIndex}`;
@@ -324,6 +423,26 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     return () => socket.close();
   }, [jobId, token]);
 
+  // Scroll-spy: highlight the step card currently in view inside the STEPS rail.
+  useEffect(() => {
+    if (activeWorkerTab !== 'STEPS') return;
+    const stepElements = Array.from(document.querySelectorAll<HTMLElement>('[data-step-card]'));
+    if (!stepElements.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) {
+          setActiveStepId(visible[0].target.getAttribute('data-step-id'));
+        }
+      },
+      { rootMargin: '-15% 0px -70% 0px', threshold: 0 },
+    );
+    stepElements.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [activeWorkerTab]);
+
   const handleConfirmCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!workerNameInput.trim()) {
@@ -334,6 +453,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     const finalMac = deviceMac.trim() || getDeviceMacAddress();
     const finalDev = deviceInfo.trim() || getDeviceInfo();
 
+    setIsCheckingIn(true);
     try {
       await workerSessionApi.checkIn(jobId, token, {
         workerName: workerNameInput.trim(),
@@ -349,6 +469,8 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       setIsCheckedIn(true);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Không thể check-in phiên kiểm định.');
+    } finally {
+      setIsCheckingIn(false);
     }
   };
 
@@ -475,36 +597,11 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     });
   };
 
-  // Reliable Photo Upload Helper (Server upload + Base64 DataURL fallback so photos never fail)
-  const uploadPhotoReliably = async (file: File, stepId: string): Promise<string> => {
-    // 1. Compress image client-side first (reduces 15MB phone photo down to ~150KB)
+  // Compresses a photo client-side to a compact JPEG (~150KB instead of 15MB) so
+  // weak-signal links transfer far less data. Returns the compressed DataURL.
+  const uploadPhotoReliably = async (file: File, _section?: string): Promise<string> => {
     const compressedDataUrl = await compressImageFile(file, 1200, 1200, 0.75).catch(() => null);
-
-    try {
-      let fileToUpload = file;
-      if (compressedDataUrl) {
-        const blob = await (await fetch(compressedDataUrl)).blob();
-        fileToUpload = new File([blob], 'photo.jpg', { type: 'image/jpeg' });
-      }
-
-      const uploadForm = new FormData();
-      uploadForm.set('photo', fileToUpload);
-      uploadForm.set('stepId', stepId);
-      const res = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos?token=${encodeURIComponent(token)}`, {
-        method: 'POST',
-        body: uploadForm
-      });
-      if (res.ok) {
-        const data = await res.json() as { photoUrl?: string; url?: string };
-        if (data.photoUrl || data.url) return data.photoUrl || data.url || '';
-      }
-    } catch (e) {
-      console.warn('Backend photo upload request error, using compressed DataURL fallback:', e);
-    }
-
-    // 2. Fallback to compressed DataURL (only ~150KB instead of 15MB!)
     if (compressedDataUrl) return compressedDataUrl;
-
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -512,6 +609,13 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
       };
       reader.readAsDataURL(file);
     });
+  };
+
+  const compressToFile = async (file: File): Promise<File> => {
+    const compressedDataUrl = await compressImageFile(file, 1200, 1200, 0.75).catch(() => null);
+    if (!compressedDataUrl) return file;
+    const blob = await (await fetch(compressedDataUrl)).blob();
+    return new File([blob], 'photo.jpg', { type: 'image/jpeg' });
   };
 
   // Handles updating photo for a specific slot inside a step
@@ -523,67 +627,91 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     captureFrame: CaptureFrame,
     sharpnessScore: number,
     manualOverride = false,
+    aspectRatio?: number,
   ) => {
     const slotKey = `${stepId}:${slotIndex}`;
     setUploadingSlotKey(slotKey);
     setSlotUploadStates((previous) => ({ ...previous, [slotKey]: { status: 'UPLOADING', message: 'Đang gửi ảnh lên server...' } }));
     const step = template.steps.find(s => s.stepId === stepId);
-    
-    const photoUrl = await uploadPhotoReliably(file, stepId);
+    const slotLabel = Array.isArray(step?.photoSlotConfigs)
+      ? (step.photoSlotConfigs.find((cfg) => Number(cfg.slotIndex) === slotIndex)?.label || step.title || 'Ảnh minh chứng')
+      : step?.title || 'Ảnh minh chứng';
+    const target: CaptureTarget = { stepId, slotIndex, slotLabel, source, captureFrame, aspectRatio };
 
-    setStepResults(prev => prev.map(sr => {
-      if (sr.stepId !== stepId) return sr;
-
-      const updatedSlots = (sr.photoSlotsData || []).map(s => {
-        if (s.slotIndex === slotIndex) {
-          return { ...s, photoUrl };
-        }
-        return s;
-      });
-      return { ...sr, photoSlotsData: updatedSlots };
-    }));
+    const fileToUpload = await compressToFile(file);
+    const previewDataUrl = await uploadPhotoReliably(fileToUpload).catch(() => null);
+    if (previewDataUrl) {
+      setStepResults(prev => prev.map(sr => {
+        if (sr.stepId !== stepId) return sr;
+        const updatedSlots = (sr.photoSlotsData || []).map(s => (s.slotIndex === slotIndex ? { ...s, photoUrl: previewDataUrl } : s));
+        return { ...sr, photoSlotsData: updatedSlots };
+      }));
+    }
 
     try {
       const uploadForm = new FormData();
-      uploadForm.set('photo', file);
+      uploadForm.set('photo', fileToUpload);
       uploadForm.set('stepId', stepId);
       uploadForm.set('slotIndex', String(slotIndex));
       uploadForm.set('source', source);
       uploadForm.set('captureFrame', captureFrame);
       uploadForm.set('sharpnessScore', String(sharpnessScore));
       uploadForm.set('manualOverride', String(manualOverride));
-      
+      if (aspectRatio !== undefined && Number.isFinite(aspectRatio) && aspectRatio > 0) {
+        uploadForm.set('aspectRatio', String(aspectRatio));
+      }
+
       const uploadResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos?token=${encodeURIComponent(token)}`, {
         method: 'POST',
         body: uploadForm
       });
-      const responseBody = await uploadResponse.json().catch(() => ({})) as { id?: string; photoUrl?: string; error?: string; qualityStatus?: 'APPROVED' | 'UNAVAILABLE' | 'REJECTED'; manualOverride?: boolean; manualOverrideAvailable?: boolean; qualityMessage?: string };
-      
+      const responseBody = await uploadResponse.json().catch(() => ({})) as { id?: string; photoUrl?: string; error?: string; qualityStatus?: 'APPROVED' | 'UNAVAILABLE' | 'REJECTED' | 'PENDING'; manualOverride?: boolean };
+
       if (!uploadResponse.ok) {
-        const target: CaptureTarget = { stepId, slotIndex, slotLabel: 'Ảnh minh chứng', source, captureFrame, selectedFile: file, error: responseBody.error || 'Không thể kiểm tra ảnh.' };
-        if (responseBody.qualityStatus === 'UNAVAILABLE' && responseBody.manualOverrideAvailable && !manualOverride) {
-          setSlotUploadStates((previous) => ({ ...previous, [slotKey]: { status: 'ACTION_REQUIRED', message: 'Cần xác nhận tải ảnh thủ công.' } }));
-          setManualOverride({ target, file, sharpnessScore, message: responseBody.error || `${botName} chưa thể kiểm tra ảnh.` });
-          return;
-        }
-        if (responseBody.qualityStatus === 'REJECTED' || uploadResponse.status === 422) {
-          setSlotUploadStates((previous) => ({ ...previous, [slotKey]: { status: 'ERROR', message: responseBody.error || 'Ảnh chưa đạt yêu cầu.' } }));
-          setCaptureTarget(target);
-          return;
-        }
-        throw new Error(responseBody.error || 'Không thể lưu ảnh lên hệ thống QC.');
+        setSlotUploadStates((previous) => ({ ...previous, [slotKey]: { status: 'ERROR', message: responseBody.error || 'Ảnh chưa đạt yêu cầu. Hãy căn và chụp lại.' } }));
+        setCaptureTarget({ ...target, selectedFile: fileToUpload, error: responseBody.error || 'Ảnh chưa đạt yêu cầu.' });
+        return;
       }
       if (!responseBody.id || !responseBody.photoUrl) throw new Error('Hệ thống không trả về ảnh đã lưu.');
-      const uploadedPhoto = responseBody as { id: string; photoUrl: string; manualOverride?: boolean; qualityStatus?: 'APPROVED' | 'UNAVAILABLE' };
 
-      setStepResults((previous) => applyUploadedPhoto(previous, stepId, slotIndex, uploadedPhoto.photoUrl, uploadedPhoto.manualOverride, uploadedPhoto.qualityStatus));
-      setSlotUploadStates((previous) => ({ ...previous, [slotKey]: { status: 'SAVED', message: 'Ảnh đã được lưu trên server.' } }));
-      setWorkerNotice('Ảnh đã được lưu trên server.');
+      pendingOverrideFiles.current[slotKey] = { target, file: fileToUpload, sharpnessScore, photoId: responseBody.id };
+
+      setStepResults((previous) => applyUploadedPhoto(previous, stepId, slotIndex, responseBody.photoUrl, responseBody.manualOverride, responseBody.qualityStatus));
+      const isPendingQuality = responseBody.qualityStatus === 'PENDING';
+      setSlotUploadStates((previous) => ({ ...previous, [slotKey]: { status: 'SAVED', message: isPendingQuality ? 'Ảnh đã lưu. Đang kiểm tra chất lượng...' : 'Ảnh đã được lưu trên server.' } }));
+      setWorkerNotice(isPendingQuality ? 'Ảnh đã lưu. Vero đang kiểm tra chất lượng...' : 'Ảnh đã được lưu trên server.');
 
       // Vero runs only in the server-side queue so worker devices cannot exhaust quota.
       if (step?.enableAiDetection) {
         setAiAnalyzingStepId(stepId);
         try {
+          const analysisResponse = await fetch(`/api/worker-sessions/${encodeURIComponent(jobId)}/photos/${encodeURIComponent(responseBody.id)}/analyze?token=${encodeURIComponent(token)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          if (!analysisResponse.ok) throw new Error(`Không thể đưa tác vụ ${botName} vào hàng đợi.`);
+          const analysis = await analysisResponse.json() as { status: string; summaryText?: string; result_json?: Record<string, unknown> };
+
+          setStepResults(prev => prev.map(sr => {
+            if (sr.stepId !== stepId) return sr;
+
+            const updatedSlots = (sr.photoSlotsData || []).map(s => {
+              if (s.slotIndex === slotIndex) {
+                return { ...s, aiDetectedText: analysis.summaryText || `Đang chờ ${botName} xử lý`, aiResultJson: analysis.result_json };
+              }
+              return s;
+            });
+
+            return {
+              ...sr,
+              photoSlotsData: updatedSlots,
+              aiDetectedValue: analysis.summaryText || `${botName} đang xếp hàng xử lý; có thể tiếp tục bước kiểm tra khác.`,
+              aiResultJson: analysis.result_json,
+              aiDetectStatus: analysis.status === 'COMPLETED' ? 'SUCCESS' : 'WARNING',
+              textValue: sr.textValue || ''
+            };
+          }));
         } catch (err) {
           console.error('Vero detection error:', err);
         } finally {
@@ -605,7 +733,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     const target = captureTarget;
     if (!target) return;
     setCaptureTarget(null);
-    await handlePhotoUploadForSlot(target.stepId, target.slotIndex, file, target.source, target.captureFrame, sharpnessScore);
+    await handlePhotoUploadForSlot(target.stepId, target.slotIndex, file, target.source, target.captureFrame, sharpnessScore, false, target.aspectRatio);
   };
 
   // Handles Step Status change (PASS / FAIL)
@@ -642,30 +770,40 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     setDefectsFinding(prev => prev.filter(d => d.id !== id));
   };
 
-  const handleUploadWorkerDefectPhoto = async (defectId: string, file: File) => {
-    const photoUrl = await uploadPhotoReliably(file, 'DEFECTS_FINDING');
-    setDefectsFinding(prev => prev.map(d => {
-      if (d.id === defectId) {
-        return { ...d, photos: [...(d.photos || []), photoUrl] };
+  const openSectionPhotoCapture = (target: Omit<SectionCaptureTarget, 'source'>) => {
+    setSectionCaptureTarget({ ...target, source: 'CAMERA' });
+  };
+
+  const handleSectionPhotoCaptured = async (file: File, _sharpnessScore: number, target: SectionCaptureTarget) => {
+    const uploadKey = sectionUploadKey(target);
+    setSectionUploadingKey(uploadKey);
+    setSectionCaptureTarget(null);
+    try {
+      const fileToUpload = await compressToFile(file);
+      const photoUrl = await workerSessionApi.uploadSectionPhoto(jobId, token, fileToUpload);
+      if (target.section === 'DEFECT' && target.defectId) {
+        setDefectsFinding(prev => prev.map(d => {
+          if (d.id === target.defectId) {
+            return { ...d, photos: [...(d.photos || []), photoUrl] };
+          }
+          return d;
+        }));
+      } else if (target.section === 'PACKAGING' && target.field) {
+        setPackagingInfo(prev => ({
+          ...prev,
+          [target.field!]: [...(prev[target.field!] || []), photoUrl]
+        }));
+      } else if (target.section === 'OTHER') {
+        setOtherInfo(prev => ({
+          ...prev,
+          photos: [...(prev.photos || []), photoUrl]
+        }));
       }
-      return d;
-    }));
-  };
-
-  const handleUploadPackagingPhoto = async (field: 'cartonPhotos' | 'devicePhotos' | 'barcodePhotos', file: File) => {
-    const photoUrl = await uploadPhotoReliably(file, 'PACKAGING_INFO');
-    setPackagingInfo(prev => ({
-      ...prev,
-      [field]: [...(prev[field] || []), photoUrl]
-    }));
-  };
-
-  const handleUploadOtherPhoto = async (file: File) => {
-    const photoUrl = await uploadPhotoReliably(file, 'OTHER_INFO');
-    setOtherInfo(prev => ({
-      ...prev,
-      photos: [...(prev.photos || []), photoUrl]
-    }));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Không thể tải ảnh lên hệ thống.');
+    } finally {
+      setSectionUploadingKey(null);
+    }
   };
 
   // Case 3: Worker Check-In Form (Prompt for Worker Name & Auto-detect MAC Address)
@@ -714,10 +852,11 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
 
             <button
               type="submit"
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
+              disabled={isCheckingIn}
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2"
             >
-              <UserCheck className="w-4 h-4" />
-              <span>Xác Nhận Đăng Nhập & Bắt Đầu Kiểm Định</span>
+              {isCheckingIn ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
+              <span>{isCheckingIn ? 'Đang xác nhận đăng nhập...' : 'Xác Nhận Đăng Nhập & Bắt Đầu Kiểm Định'}</span>
             </button>
           </form>
         </div>
@@ -756,6 +895,10 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   };
 
   const handleSubmitResults = async () => {
+    if (uploadingSlotKey !== null || sectionUploadingKey !== null) {
+      alert('Có ảnh đang được tải lên. Vui lòng chờ tải xong trước khi nộp báo cáo.');
+      return;
+    }
     setIsSubmitting(true);
     try {
       const res = await workerSessionApi.submitResults(
@@ -915,6 +1058,42 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           </div>
         </div>
 
+        {/* Live Overall Summary */}
+        {(() => {
+          const summary = overallSummary(template.steps, stepResults);
+          return (
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-xs font-bold text-slate-700">Tổng kết kiểm định</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Đạt: {summary.passed}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">
+                    Lỗi: {summary.failed}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                    Đang kiểm: {summary.pending}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                    Tổng: {summary.total}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-2.5 flex items-center gap-2 text-[11px] text-slate-500">
+                <span>Ảnh minh chứng:</span>
+                <span className="font-bold text-slate-700">{summary.photosActual}/{summary.photosRequired}</span>
+                <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden min-w-16">
+                  <div
+                    className="h-full rounded-full bg-blue-500 transition-all"
+                    style={{ width: summary.photosRequired ? `${Math.min(100, (summary.photosActual / summary.photosRequired) * 100)}%` : '0%' }}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Worker Navigation Tabs */}
         <div className="grid grid-cols-4 border-b border-slate-700 bg-slate-900 text-center rounded-xl overflow-hidden">
           {[
@@ -941,7 +1120,52 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
 
         {/* Tab 2: STEPS */}
         {activeWorkerTab === 'STEPS' && (
-          <div className="space-y-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+            {/* Step status rail */}
+            <aside className="lg:w-60 lg:shrink-0 lg:sticky lg:top-4">
+              <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm">
+                <div className="text-[11px] font-bold text-slate-700 mb-2 px-1">Các bước QC</div>
+                <div className="flex gap-1.5 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+                  {template.steps.map((step, idx) => {
+                    const stepRes = stepResults.find(r => r.stepId === step.stepId);
+                    const status = stepRailStatus(step, stepRes);
+                    const isActive = activeStepId === step.stepId;
+                    const progress = stepPhotoProgress(step, stepRes);
+                    const statusStyles: Record<string, string> = {
+                      PASS: 'bg-emerald-500 text-white',
+                      FAIL: 'bg-red-500 text-white',
+                      IN_PROGRESS: 'bg-amber-400 text-slate-900',
+                      NOT_STARTED: 'bg-slate-200 text-slate-500',
+                    };
+                    return (
+                      <button
+                        key={step.stepId}
+                        type="button"
+                        onClick={() => {
+                          setActiveStepId(step.stepId);
+                          document.getElementById(`step-${step.stepId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        className={`flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors lg:w-full lg:shrink ${
+                          isActive ? 'bg-blue-50 ring-1 ring-blue-300' : 'hover:bg-slate-50'
+                        }`}
+                        title={`${step.title} — ${stepRailStatusLabel(status)}`}
+                      >
+                        <span className={`w-6 h-6 rounded-full text-[11px] font-black flex items-center justify-center shrink-0 ${statusStyles[status]}`}>
+                          {idx + 1}
+                        </span>
+                        <span className="hidden min-w-0 flex-1 truncate text-[11px] font-semibold text-slate-700 sm:block">{step.title}</span>
+                        <span className="text-[10px] font-bold text-slate-500 shrink-0">
+                          {status === 'IN_PROGRESS' ? `${progress.actual}/${progress.required}` : stepRailStatusLabel(status)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </aside>
+
+            {/* Step cards */}
+            <div className="flex-1 min-w-0 space-y-6">
           {template.steps.map((step, idx) => {
             const stepRes = stepResults.find(r => r.stepId === step.stepId);
             const isAnalyzing = aiAnalyzingStepId === step.stepId;
@@ -949,13 +1173,17 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
               slotIndex: i + 1,
               label: lbl,
               photoType: 'GENERAL_OTHER' as PhotoType,
-              captureFrame: 'RECTANGLE' as CaptureFrame
+              captureFrame: 'RECTANGLE' as CaptureFrame,
+              aspectRatio: undefined
             }));
 
             return (
               <div
                 key={step.stepId}
-                className={`bg-white border rounded-2xl p-5 transition-all space-y-4 shadow-sm ${
+                id={`step-${step.stepId}`}
+                data-step-card
+                data-step-id={step.stepId}
+                className={`bg-white border rounded-2xl p-5 transition-all space-y-4 shadow-sm scroll-mt-4 ${
                   stepRes?.status === 'PASS'
                     ? 'border-emerald-300'
                     : stepRes?.status === 'FAIL'
@@ -972,6 +1200,18 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     <div>
                       <h3 className="font-bold text-sm text-slate-900">{step.title}</h3>
                       <p className="text-xs text-slate-500 mt-0.5">Tiêu chuẩn: <span className="text-slate-700">{step.passCriteria}</span></p>
+                      {(() => {
+                        const progress = stepPhotoProgress(step, stepRes);
+                        if (progress.required <= 0) return null;
+                        const complete = progress.actual >= progress.required;
+                        return (
+                          <p className="mt-1.5 text-[11px] font-bold inline-flex items-center gap-1.5">
+                            <span className={`px-2 py-0.5 rounded-full border ${complete ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                              Ảnh: {progress.actual}/{progress.required}
+                            </span>
+                          </p>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -1054,15 +1294,15 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                                     className="w-full h-full object-cover" 
                                   />
                                   <div className="absolute inset-x-0 bottom-0 flex gap-1.5 bg-slate-950/80 p-1.5">
-                                    <button type="button" onClick={() => setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'CAMERA', captureFrame: slot.captureFrame || 'RECTANGLE' })} className="flex min-w-0 flex-1 items-center justify-center gap-1 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-900 hover:bg-sky-100" title="Chụp ảnh mới"><Camera className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Chụp ảnh</span></button>
-                                    <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-900 hover:bg-sky-100" title="Tải ảnh mới"><Upload className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Tải ảnh</span><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'UPLOAD', captureFrame: slot.captureFrame || 'RECTANGLE', selectedFile: file }); e.currentTarget.value = ''; }} /></label>
+                                    <button type="button" onClick={() => setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'CAMERA', captureFrame: slot.captureFrame || 'RECTANGLE', aspectRatio: slot.aspectRatio })} className="flex min-w-0 flex-1 items-center justify-center gap-1 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-900 hover:bg-sky-100" title="Chụp ảnh mới"><Camera className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Chụp ảnh</span></button>
+                                    <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 bg-white px-2 py-1.5 text-[11px] font-bold text-slate-900 hover:bg-sky-100" title="Tải ảnh mới"><Upload className="h-3.5 w-3.5 shrink-0" /><span className="truncate">Tải ảnh</span><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'UPLOAD', captureFrame: slot.captureFrame || 'RECTANGLE', aspectRatio: slot.aspectRatio, selectedFile: file }); e.currentTarget.value = ''; }} /></label>
                                   </div>
                                 </>
                               ) : (
                                 <div className="flex h-full w-full items-center justify-center gap-2 p-2 text-center">
                                   {uploadingSlotKey === `${step.stepId}:${slot.slotIndex}` ? <RefreshCw className="h-5 w-5 animate-spin text-sky-600" /> : <>
-                                    <button type="button" onClick={() => setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'CAMERA', captureFrame: slot.captureFrame || 'RECTANGLE' })} className="flex flex-col items-center gap-1 px-2 py-1.5 text-slate-600 hover:text-sky-700" title="Chụp ảnh"><Camera className="w-5 h-5" /><span className="text-[11px] font-semibold">Chụp ảnh</span></button>
-                                    <label className="flex cursor-pointer flex-col items-center gap-1 px-2 py-1.5 text-slate-600 hover:text-sky-700" title="Tải ảnh"><Upload className="w-5 h-5" /><span className="text-[11px] font-semibold">Tải ảnh</span><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'UPLOAD', captureFrame: slot.captureFrame || 'RECTANGLE', selectedFile: file }); e.currentTarget.value = ''; }} /></label>
+                                    <button type="button" onClick={() => setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'CAMERA', captureFrame: slot.captureFrame || 'RECTANGLE', aspectRatio: slot.aspectRatio })} className="flex flex-col items-center gap-1 px-2 py-1.5 text-slate-600 hover:text-sky-700" title="Chụp ảnh"><Camera className="w-5 h-5" /><span className="text-[11px] font-semibold">Chụp ảnh</span></button>
+                                    <label className="flex cursor-pointer flex-col items-center gap-1 px-2 py-1.5 text-slate-600 hover:text-sky-700" title="Tải ảnh"><Upload className="w-5 h-5" /><span className="text-[11px] font-semibold">Tải ảnh</span><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) setCaptureTarget({ stepId: step.stepId, slotIndex: slot.slotIndex, slotLabel: slot.label, source: 'UPLOAD', captureFrame: slot.captureFrame || 'RECTANGLE', aspectRatio: slot.aspectRatio, selectedFile: file }); e.currentTarget.value = ''; }} /></label>
                                   </>}
                                 </div>
                               )}
@@ -1124,20 +1364,21 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
 
                   <div className="space-y-1 sm:col-span-1">
                     <label className="text-xs font-semibold text-slate-700 block">Ghi chú công nhân:</label>
-                    <input
-                      type="text"
+                    <textarea
+                      rows={3}
                       value={stepRes?.note || ''}
                       onChange={(e) => handleStepNoteChange(step.stepId, e.target.value)}
                       placeholder="Ghi chú kết quả kiểm định..."
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500 resize-y"
                     />
                   </div>
                 </div>
               </div>
             );
           })}
-        </div>
-      )}
+            </div>
+          </div>
+        )}
 
         {/* Tab 3: DEFECTS */}
         {activeWorkerTab === 'DEFECTS' && (
@@ -1231,19 +1472,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                           const src = typeof item === 'string' ? item : item.url;
                           return <img key={pIdx} src={src} alt="Lỗi" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
                         })}
-                        <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
-                          <Upload className="w-4 h-4" />
-                          <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) handleUploadWorkerDefectPhoto(def.id, file);
-                            }}
-                          />
-                        </label>
+                        <SectionPhotoPicker
+                          uploading={sectionUploadingKey === sectionUploadKey({ section: 'DEFECT', slotLabel: '', defectId: def.id })}
+                          slotLabel={`Ảnh lỗi #${idx + 1}`}
+                          onCamera={() => openSectionPhotoCapture({ section: 'DEFECT', slotLabel: `Ảnh lỗi #${idx + 1}`, defectId: def.id })}
+                          onFile={(file) => setSectionCaptureTarget({ section: 'DEFECT', slotLabel: `Ảnh lỗi #${idx + 1}`, defectId: def.id, source: 'UPLOAD', selectedFile: file })}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1300,19 +1534,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     const src = typeof item === 'string' ? item : item.url;
                     return <img key={pIdx} src={src} alt="Carton" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
                   })}
-                  <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
-                    <Upload className="w-4 h-4" />
-                    <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleUploadPackagingPhoto('cartonPhotos', file);
-                      }}
-                    />
-                  </label>
+                  <SectionPhotoPicker
+                    uploading={sectionUploadingKey === sectionUploadKey({ section: 'PACKAGING', slotLabel: '', field: 'cartonPhotos' })}
+                    slotLabel="Ảnh thùng carton"
+                    onCamera={() => openSectionPhotoCapture({ section: 'PACKAGING', slotLabel: 'Ảnh thùng carton', field: 'cartonPhotos' })}
+                    onFile={(file) => setSectionCaptureTarget({ section: 'PACKAGING', slotLabel: 'Ảnh thùng carton', field: 'cartonPhotos', source: 'UPLOAD', selectedFile: file })}
+                  />
                 </div>
               </div>
             </div>
@@ -1361,19 +1588,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     const src = typeof item === 'string' ? item : item.url;
                     return <img key={pIdx} src={src} alt="Device" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
                   })}
-                  <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
-                    <Upload className="w-4 h-4" />
-                    <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleUploadPackagingPhoto('devicePhotos', file);
-                      }}
-                    />
-                  </label>
+                  <SectionPhotoPicker
+                    uploading={sectionUploadingKey === sectionUploadKey({ section: 'PACKAGING', slotLabel: '', field: 'devicePhotos' })}
+                    slotLabel="Ảnh đo máy"
+                    onCamera={() => openSectionPhotoCapture({ section: 'PACKAGING', slotLabel: 'Ảnh đo máy', field: 'devicePhotos' })}
+                    onFile={(file) => setSectionCaptureTarget({ section: 'PACKAGING', slotLabel: 'Ảnh đo máy', field: 'devicePhotos', source: 'UPLOAD', selectedFile: file })}
+                  />
                 </div>
               </div>
             </div>
@@ -1413,19 +1633,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     const src = typeof item === 'string' ? item : item.url;
                     return <img key={pIdx} src={src} alt="Barcode" className="w-16 h-16 object-cover rounded-lg border border-slate-700" />;
                   })}
-                  <label className="w-16 h-16 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
-                    <Upload className="w-4 h-4" />
-                    <span className="text-[9px] mt-1 font-bold">+ Ảnh</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleUploadPackagingPhoto('barcodePhotos', file);
-                      }}
-                    />
-                  </label>
+                  <SectionPhotoPicker
+                    uploading={sectionUploadingKey === sectionUploadKey({ section: 'PACKAGING', slotLabel: '', field: 'barcodePhotos' })}
+                    slotLabel="Ảnh quét mã vạch"
+                    onCamera={() => openSectionPhotoCapture({ section: 'PACKAGING', slotLabel: 'Ảnh quét mã vạch', field: 'barcodePhotos' })}
+                    onFile={(file) => setSectionCaptureTarget({ section: 'PACKAGING', slotLabel: 'Ảnh quét mã vạch', field: 'barcodePhotos', source: 'UPLOAD', selectedFile: file })}
+                  />
                 </div>
               </div>
             </div>
@@ -1455,19 +1668,12 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                   const src = typeof item === 'string' ? item : item.url;
                   return <img key={pIdx} src={src} alt="Other" className="w-20 h-20 object-cover rounded-lg border border-slate-700" />;
                 })}
-                <label className="w-20 h-20 border-2 border-dashed border-slate-600 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-500 text-slate-400 hover:text-white bg-slate-950 transition-colors">
-                  <Upload className="w-4 h-4" />
-                  <span className="text-[9px] mt-1 font-bold">+ Thêm Ảnh</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleUploadOtherPhoto(file);
-                    }}
-                  />
-                </label>
+                <SectionPhotoPicker
+                  uploading={sectionUploadingKey === sectionUploadKey({ section: 'OTHER', slotLabel: '' })}
+                  slotLabel="Ảnh bổ sung"
+                  onCamera={() => openSectionPhotoCapture({ section: 'OTHER', slotLabel: 'Ảnh bổ sung' })}
+                  onFile={(file) => setSectionCaptureTarget({ section: 'OTHER', slotLabel: 'Ảnh bổ sung', source: 'UPLOAD', selectedFile: file })}
+                />
               </div>
             </div>
           </div>
@@ -1483,7 +1689,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2">
           <button
             onClick={handleSaveDraftResults}
-            disabled={isSavingDraft || isSubmitting}
+            disabled={isSavingDraft || isSubmitting || uploadingSlotKey !== null || sectionUploadingKey !== null}
             className="w-full sm:w-auto px-6 py-3.5 bg-white hover:bg-slate-50 text-slate-800 text-sm font-bold rounded-2xl border border-slate-300 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {isSavingDraft ? (
@@ -1501,7 +1707,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
 
           <button
             onClick={handleSubmitResults}
-            disabled={isSubmitting || isSavingDraft}
+            disabled={isSubmitting || isSavingDraft || uploadingSlotKey !== null || sectionUploadingKey !== null}
             className="w-full sm:w-auto px-8 py-3.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-2xl shadow-xl shadow-blue-600/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {isSubmitting ? (
@@ -1525,12 +1731,31 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           key={`${captureTarget.stepId}:${captureTarget.slotIndex}:${captureTarget.source}:${captureTarget.selectedFile?.name || ''}:${captureTarget.error || ''}`}
           mode={captureTarget.source}
           frame={captureTarget.captureFrame}
+          aspectRatio={captureTarget.aspectRatio}
           selectedFile={captureTarget.selectedFile}
           slotLabel={captureTarget.slotLabel}
           initialError={captureTarget.error}
           onClose={() => setCaptureTarget(null)}
           onComplete={(file, sharpnessScore) => {
             void handleCapturedPhoto(file, sharpnessScore).catch((error) => {
+              alert(error instanceof Error ? error.message : 'Không thể tải ảnh lên hệ thống QC.');
+            });
+          }}
+        />
+      )}
+
+      {sectionCaptureTarget && (
+        <PhotoCaptureModal
+          key={`section:${sectionCaptureTarget.section}:${sectionUploadKey(sectionCaptureTarget)}:${sectionCaptureTarget.source}:${sectionCaptureTarget.selectedFile?.name || ''}`}
+          mode={sectionCaptureTarget.source}
+          frame="RECTANGLE"
+          selectedFile={sectionCaptureTarget.selectedFile}
+          slotLabel={sectionCaptureTarget.slotLabel}
+          onClose={() => setSectionCaptureTarget(null)}
+          onComplete={(file, sharpnessScore) => {
+            const target = sectionCaptureTarget;
+            setSectionCaptureTarget(null);
+            void handleSectionPhotoCaptured(file, sharpnessScore, target).catch((error) => {
               alert(error instanceof Error ? error.message : 'Không thể tải ảnh lên hệ thống QC.');
             });
           }}
@@ -1550,7 +1775,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
             </div>
             <div className="mt-5 flex gap-3">
               <button type="button" onClick={() => { setCaptureTarget({ ...manualOverride.target, selectedFile: manualOverride.file, error: '' }); setManualOverride(null); }} className="flex-1 border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Căn lại ảnh</button>
-              <button type="button" onClick={() => { const pending = manualOverride; setManualOverride(null); void handlePhotoUploadForSlot(pending.target.stepId, pending.target.slotIndex, pending.file, pending.target.source, pending.target.captureFrame, pending.sharpnessScore, true).catch((error) => alert(error instanceof Error ? error.message : 'Không thể tải ảnh thủ công.')); }} className="flex-1 bg-amber-500 px-3 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400">Xác nhận tải ảnh</button>
+              <button type="button" onClick={() => { const pending = manualOverride; setManualOverride(null); void handlePhotoUploadForSlot(pending.target.stepId, pending.target.slotIndex, pending.file, pending.target.source, pending.target.captureFrame, pending.sharpnessScore, true, pending.target.aspectRatio).catch((error) => alert(error instanceof Error ? error.message : 'Không thể tải ảnh thủ công.')); }} className="flex-1 bg-amber-500 px-3 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400">Xác nhận tải ảnh</button>
             </div>
           </div>
         </div>

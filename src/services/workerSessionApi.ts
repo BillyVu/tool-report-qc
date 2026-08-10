@@ -172,6 +172,18 @@ export function createWorkerSessionApi(options: WorkerSessionApiOptions = {}) {
       return true;
     },
 
+    async uploadSectionPhoto(jobId: string, token: string, photo: File): Promise<string> {
+      const form = new FormData();
+      form.set('photo', photo);
+      const response = await fetchImpl(`/api/worker-sessions/${encodeURIComponent(jobId)}/section-photos?${tokenQuery(token)}`, {
+        method: 'POST',
+        body: form,
+      });
+      const payload = await expectOk(response);
+      if (!payload?.photoUrl) throw new Error('Hệ thống không trả về ảnh đã lưu.');
+      return payload.photoUrl;
+    },
+
     async saveDraftResults(
       jobId: string,
       token: string,

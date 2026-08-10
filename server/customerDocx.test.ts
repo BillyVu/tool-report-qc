@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import PizZip from 'pizzip';
 import sharp from 'sharp';
-import { buildX530CustomerReport, isCustomerDocxTemplate } from './customerDocx';
+import { buildX530CustomerReport, applyX530SlotAspectRatios, isCustomerDocxTemplate, X530_SLOT_ASPECT_RATIOS, X530_STEP_IMAGE_TARGETS } from './customerDocx';
 
 const TEMPLATE_NAME = 'X530 Knobs_Inspection Report 100-70-260722-117pcs_ATT.docx';
 const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -13,6 +13,52 @@ const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 test('recognizes only the approved X530 customer template', () => {
   assert.equal(isCustomerDocxTemplate(TEMPLATE_NAME), true);
   assert.equal(isCustomerDocxTemplate('../Mau_Bao_Cao_QC_Chuan.docx'), false);
+});
+
+test('keeps a slot aspect ratio for every X530 evidence target', () => {
+  for (const [stepId, targets] of Object.entries(X530_STEP_IMAGE_TARGETS)) {
+    const ratios = X530_SLOT_ASPECT_RATIOS[stepId];
+    assert.ok(ratios, `missing aspect ratios for ${stepId}`);
+    assert.equal(ratios.length, targets.length, `aspect count mismatch for ${stepId}`);
+    ratios.forEach((ratio) => assert.ok(ratio > 0 && ratio < 5, `out-of-range ratio ${ratio} in ${stepId}`));
+  }
+});
+
+test('attaches the report slot aspect ratio to worker portal slot configs', () => {
+  const snapshot = {
+    docxTemplateName: TEMPLATE_NAME,
+    steps: [
+      {
+        stepId: 'STEP_1',
+        title: 'Mặt trước',
+        photoSlotConfigs: [
+          { slotIndex: 1, label: 'Slot 1', photoType: 'PHONE_FRONT', captureFrame: 'RECTANGLE' },
+          { slotIndex: 2, label: 'Slot 2', photoType: 'PHONE_BACK', captureFrame: 'RECTANGLE' },
+        ],
+      },
+      { stepId: 'OTHER_STEP', title: 'Khác', photoSlots: ['A', 'B'] },
+    ],
+  };
+  const enriched = applyX530SlotAspectRatios(snapshot) as {
+    steps: Array<{ stepId: string; photoSlotConfigs: Array<{ slotIndex: number; aspectRatio?: number }> }>;
+  };
+
+  assert.equal(enriched.steps[0].photoSlotConfigs[0].aspectRatio, X530_SLOT_ASPECT_RATIOS.STEP_1[0]);
+  assert.equal(enriched.steps[0].photoSlotConfigs[1].aspectRatio, X530_SLOT_ASPECT_RATIOS.STEP_1[1]);
+  assert.equal(enriched.steps[0].stepId, 'STEP_1');
+  assert.equal((snapshot.steps[0] as { photoSlotConfigs: Array<{ aspectRatio?: number }> }).photoSlotConfigs[0].aspectRatio, undefined, 'does not mutate the persisted snapshot');
+});
+
+test('builds photoSlotConfigs with aspect ratios when a step only has photoSlots', () => {
+  const snapshot = {
+    docxTemplateName: TEMPLATE_NAME,
+    steps: [{ stepId: 'STEP_2', title: 'Mặt sau', photoSlots: ['Slot 1', 'Slot 2'] }],
+  };
+  const enriched = applyX530SlotAspectRatios(snapshot) as {
+    steps: Array<{ photoSlotConfigs: Array<{ slotIndex: number; aspectRatio?: number }> }>;
+  };
+  assert.equal(enriched.steps[0].photoSlotConfigs.length, 2);
+  assert.equal(enriched.steps[0].photoSlotConfigs[1].aspectRatio, X530_SLOT_ASPECT_RATIOS.STEP_2[1]);
 });
 
 test('preserves the customer package while replacing metadata and evidence media', async () => {
@@ -64,9 +110,12 @@ test('preserves the customer package while replacing metadata and evidence media
     assert.match(documentXml, /BATCH-001/);
     assert.match(documentXml, /Nguyen Van A/);
     assert.match(headerXml, /JOB-001/);
-    const renderedEvidence = await sharp(output.file('word/media/image35.png')?.asNodeBuffer()).raw().toBuffer();
-    const expectedEvidence = await sharp(newPhoto).raw().toBuffer();
-    assert.deepEqual(renderedEvidence, expectedEvidence);
+    const renderedEvidence = output.file('word/media/image35.png')?.asNodeBuffer() || Buffer.alloc(0);
+    const evidenceMeta = await sharp(renderedEvidence).metadata();
+    assert.equal(evidenceMeta.width, 729, 'evidence is cropped to the STEP_1 slot aspect (0.5204)');
+    assert.equal(evidenceMeta.height, 1400);
+    const evidenceStats = await sharp(renderedEvidence).stats();
+    assert.ok(evidenceStats.channels[0].mean > 200, 'evidence media is replaced with the uploaded red photo');
     assert.notDeepEqual(output.file('word/media/image7.png')?.asNodeBuffer(), oldPhoto);
     assert.notDeepEqual(output.file('word/media/image36.png')?.asNodeBuffer(), oldPhoto);
   } finally {

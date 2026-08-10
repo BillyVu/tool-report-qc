@@ -29,6 +29,71 @@ const X530_ALL_EVIDENCE_TARGETS = [
   ...imageRange(16, 144).filter((path) => path !== 'word/media/image107.png'),
 ];
 
+/**
+ * Aspect ratio (width/height) of each evidence image slot in the X530 template,
+ * measured from `<wp:extent>` in word/document.xml. Keyed by step, indexed by
+ * slot_index - 1 in the same order as X530_STEP_IMAGE_TARGETS. Used to size the
+ * capture crop frame on the worker portal and to crop photos exactly on export.
+ */
+export const X530_SLOT_ASPECT_RATIOS: Record<string, number[]> = {
+  STEP_1: [0.5204, 0.5142, 0.5205, 0.9793, 2.2817, 2.5963],
+  STEP_2: [0.5367, 0.5292, 0.51, 0.5254, 0.6436, 0.6444, 0.5601, 0.5449, 0.5584],
+  STEP_3: [0.5402, 0.5295, 0.5409, 0.5258, 0.5327, 0.5197, 0.6029],
+  STEP_4: [0.7367, 0.6245],
+  STEP_5: [0.6666, 0.5916],
+  STEP_6: [0.6209, 0.6278, 0.6487, 0.6419, 0.6505, 0.6366, 0.7106, 0.7243, 0.7555, 0.7492, 0.703, 0.7038, 0.7091, 0.706],
+  STEP_7: [0.5547, 0.6178, 0.5376, 0.6552, 0.6089, 0.9242, 0.9252, 0.8928, 0.8777, 0.8999, 0.8999, 0.4396, 0.4469, 0.4312],
+  STEP_8: [0.8305, 0.8243, 0.9225, 0.759, 0.7558, 0.4402, 0.4563, 0.4454, 0.9371, 0.9541],
+  STEP_9: [0.7723, 0.617, 0.7148, 1.2987, 0.687],
+  STEP_10: [0.6442, 0.6871, 0.6676, 0.6899, 0.7061, 1.9337, 1.6838, 2.1724, 2.0186, 2.1202, 1.883, 1.1971, 1.3991, 1.8129, 1.5417, 1.3902, 1.3168, 0.8517, 0.8109, 0.964, 0.9519, 1.4662, 1.5885, 1.1343, 2.0235, 1.2604, 2.1202, 1.6436, 0.9231, 1.022, 0.8433, 0.9093, 0.7239, 0.7263, 1.8837, 1.7741, 0.7314, 0.7566, 1.6578, 1.6747],
+};
+
+/**
+ * Enriches a served template snapshot with the report slot aspect ratio per
+ * photo slot, so the worker portal crop frame matches the exact report cell.
+ * Never mutates the persisted snapshot.
+ */
+export function applyX530SlotAspectRatios(template: unknown): unknown {
+  if (!template || typeof template !== 'object') return template;
+  const steps = (template as { steps?: unknown }).steps;
+  if (!Array.isArray(steps)) return template;
+  return {
+    ...(template as Record<string, unknown>),
+    steps: steps.map((step) => {
+      const config = step as { stepId?: string; photoSlotConfigs?: unknown[]; photoSlots?: unknown[] };
+      const ratios = X530_SLOT_ASPECT_RATIOS[config?.stepId || ''];
+      if (!ratios?.length) return step;
+      if (Array.isArray(config.photoSlotConfigs)) {
+        return {
+          ...config,
+          photoSlotConfigs: config.photoSlotConfigs.map((slot) => {
+            const slotConfig = slot as { slotIndex?: number };
+            const ratio = ratios[Number(slotConfig?.slotIndex) - 1];
+            return ratio ? { ...slotConfig, aspectRatio: ratio } : slot;
+          }),
+        };
+      }
+      if (Array.isArray(config.photoSlots)) {
+        return {
+          ...config,
+          photoSlotConfigs: config.photoSlots.map((label, index) => ({
+            slotIndex: index + 1,
+            label,
+            aspectRatio: ratios[index],
+          })),
+        };
+      }
+      return step;
+    }),
+  };
+}
+
+function reportAspectDimensions(aspect: number, maxSide: number): { width: number; height: number } {
+  return aspect >= 1
+    ? { width: maxSide, height: Math.round(maxSide / aspect) }
+    : { width: Math.round(maxSide * aspect), height: maxSide };
+}
+
 interface CustomerReportJob {
   external_id: string;
   batch_number: string;
@@ -152,11 +217,21 @@ export async function buildX530CustomerReport(options: {
 
   for (const [stepId, targets] of Object.entries(X530_STEP_IMAGE_TARGETS)) {
     const photos = (photosByStep.get(stepId) || []).sort((left, right) =>
-      left.slot_index - right.slot_index || new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+      new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
     );
-    for (let index = 0; index < Math.min(photos.length, targets.length); index += 1) {
-      const source = await readFile(join(options.uploadsDirectory, basename(photos[index].storage_path)));
-      const png = await sharp(source).rotate().png({ compressionLevel: 9 }).toBuffer();
+    const latestBySlot = new Map<number, CustomerReportPhoto>();
+    photos.forEach((photo) => latestBySlot.set(Number(photo.slot_index), photo));
+    const onePhotoPerSlot = [...latestBySlot.entries()].sort((left, right) => left[0] - right[0]).map(([, photo]) => photo);
+    for (let index = 0; index < Math.min(onePhotoPerSlot.length, targets.length); index += 1) {
+      const photo = onePhotoPerSlot[index];
+      const source = await readFile(join(options.uploadsDirectory, basename(photo.storage_path)));
+      const aspect = X530_SLOT_ASPECT_RATIOS[stepId]?.[index];
+      let pipeline = sharp(source).rotate();
+      if (aspect && Number.isFinite(aspect) && aspect > 0) {
+        const { width, height } = reportAspectDimensions(aspect, 1400);
+        pipeline = pipeline.resize({ width, height, fit: 'cover', position: 'centre' });
+      }
+      const png = await pipeline.png({ compressionLevel: 9 }).toBuffer();
       zip.file(targets[index], png);
     }
   }

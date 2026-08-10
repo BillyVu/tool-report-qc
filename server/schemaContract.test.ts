@@ -45,3 +45,20 @@ test('Vero prompt schema keeps versioned server-managed profiles and evidence sn
   assert.match(sql, /result_json/i);
   assert.match(sql, /validation_status/i);
 });
+
+test('Gemini analysis deduplication keys on the exact prompt snapshot hash', () => {
+  const sql = allMigrationSql();
+
+  assert.match(sql, /gemini_analyses_prompt_hash_dedup_idx/i);
+  assert.match(sql, /DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+gemini_analyses_source_sha256_detect_type_model_prompt_version_key/i);
+  assert.match(sql, /SET\s+prompt_hash\s*=\s*prompt_version/i);
+});
+
+test('photo quality gate becomes async with PENDING status and a background job type', () => {
+  const sql = allMigrationSql();
+
+  assert.match(sql, /evidence_photos_ai_quality_status_check/i);
+  assert.match(sql, /'PENDING',\s*'APPROVED',\s*'REJECTED',\s*'UNAVAILABLE',\s*'NOT_CHECKED'/i);
+  assert.match(sql, /background_jobs_type_check/i);
+  assert.match(sql, /'PHOTO_PROCESS',\s*'PHOTO_QUALITY'/i);
+});

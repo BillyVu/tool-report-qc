@@ -1,11 +1,12 @@
 import 'dotenv/config';
 import { readFile } from 'node:fs/promises';
 import { GoogleGenAI } from '@google/genai';
-import { attachAnalysisSummaryToStepResults } from './adminJobs.js';
+import { applyStepResultsUpdate, attachAnalysisSummaryToStepResults } from './adminJobs.js';
 import { db } from './db.js';
 import { dispatchPendingGeminiJobs } from './geminiOutbox.js';
 import { classifyGeminiError, retryDelayMs, shouldOpenCircuit } from './geminiPolicy.js';
 import { createGeminiQueueChannel, GEMINI_ANALYSIS_QUEUE, GEMINI_DEAD_LETTER_QUEUE, GEMINI_RETRY_QUEUE, parseGeminiMessage, publishGeminiJob, retryConnection } from './queue.js';
+import { publishWorkerSessionEvent } from './realtimeBridge.js';
 import { parseAndValidateVeroAnalysisResult, summarizeVeroAnalysis, toAnalysisJsonb } from './veroAnalysis.js';
 import { workerSessionRealtime } from './workerRealtime.js';
 
@@ -98,28 +99,40 @@ async function startGeminiWorker() {
           slotIndex: Number(row.slot_index),
           message: 'Kết quả Vero không đúng schema đã cấu hình.',
         });
+        await publishWorkerSessionEvent(db, row.job_id, {
+          type: 'ANALYSIS_FAILED',
+          photoId: row.photo_id,
+          stepId: row.step_id,
+          slotIndex: Number(row.slot_index),
+          message: 'Kết quả Vero không đúng schema đã cấu hình.',
+        });
         channel.ack(raw);
         return;
       }
       const summaryText = summarizeVeroAnalysis(validation.value);
       await db.query(`UPDATE gemini_analyses SET status = 'COMPLETED', result_text = $2, result_json = $3, validation_status = 'VALID', validation_errors = NULL, error_message = NULL, completed_at = now(), updated_at = now() WHERE id = $1`, [message.analysisId, resultText, toAnalysisJsonb(validation.value)]);
-      const job = await db.query(`SELECT id, step_results FROM inspection_jobs WHERE id = $1`, [row.job_id]);
-      if (job.rowCount) {
-        const updated = attachAnalysisSummaryToStepResults(job.rows[0].step_results, {
+      await applyStepResultsUpdate(row.job_id, (currentStepResults) =>
+        attachAnalysisSummaryToStepResults(currentStepResults, {
           stepId: row.step_id,
           slotIndex: Number(row.slot_index),
           aiDetectedText: summaryText,
           aiDetectedValue: summaryText,
           aiDetectStatus: validation.value.status === 'PASS' ? 'SUCCESS' : validation.value.status === 'INSUFFICIENT_EVIDENCE' ? 'WARNING' : 'FAILED',
-        });
-        if (updated.found) {
-          await db.query(`UPDATE inspection_jobs SET step_results = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [row.job_id, JSON.stringify(updated.updatedSteps)]);
-        }
-      }
+        }),
+      );
       await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload) VALUES ($1, 'SYSTEM', 'Vero', 'PHOTO_ANALYSIS_COMPLETED', $2)`, [row.job_id, toAnalysisJsonb(validation.value)]);
       await db.query(`UPDATE background_jobs SET status = 'COMPLETED', completed_at = now(), updated_at = now() WHERE type = 'GEMINI_ANALYZE' AND payload->>'analysisId' = $1`, [message.analysisId]);
       await db.query(`UPDATE gemini_control SET consecutive_quota_failures = 0, circuit_open_until = NULL, updated_at = now() WHERE id = true`);
       workerSessionRealtime.publish(row.job_id, {
+        type: 'ANALYSIS_COMPLETED',
+        photoId: row.photo_id,
+        stepId: row.step_id,
+        slotIndex: Number(row.slot_index),
+        summaryText,
+        resultJson: validation.value as unknown as Record<string, unknown>,
+        message: 'Vero đã phân tích xong ảnh này.',
+      });
+      await publishWorkerSessionEvent(db, row.job_id, {
         type: 'ANALYSIS_COMPLETED',
         photoId: row.photo_id,
         stepId: row.step_id,
@@ -144,13 +157,15 @@ async function startGeminiWorker() {
         await db.query(`UPDATE background_jobs SET status = 'FAILED', attempts = $2, last_error = $3, updated_at = now() WHERE type = 'GEMINI_ANALYZE' AND payload->>'analysisId' = $1`, [message.analysisId, attempts, detail]);
         const analysisRow = await db.query(`SELECT p.job_id, p.step_id, p.slot_index, a.photo_id FROM gemini_analyses a JOIN evidence_photos p ON p.id = a.photo_id WHERE a.id = $1`, [message.analysisId]);
         if (analysisRow.rowCount) {
-          workerSessionRealtime.publish(analysisRow.rows[0].job_id, {
-            type: 'ANALYSIS_FAILED',
+          const failedEvent = {
+            type: 'ANALYSIS_FAILED' as const,
             photoId: analysisRow.rows[0].photo_id,
             stepId: analysisRow.rows[0].step_id,
             slotIndex: Number(analysisRow.rows[0].slot_index),
             message: detail,
-          });
+          };
+          workerSessionRealtime.publish(analysisRow.rows[0].job_id, failedEvent);
+          await publishWorkerSessionEvent(db, analysisRow.rows[0].job_id, failedEvent);
         }
         await publishGeminiJob(channel, { ...message, attempts }, GEMINI_DEAD_LETTER_QUEUE);
       }

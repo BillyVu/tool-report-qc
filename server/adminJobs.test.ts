@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs';
+import { applyStepResultsUpdate, attachEvidencePhotosToStepResults, attachUploadedPhotoToStepResults, buildInitialStepResults, calculateExtendedSessionExpiry, moderateStepResults, updateJobStatusSql } from './adminJobs';
 
 test('builds initial step results from the saved checklist template snapshot', () => {
   const now = '2026-08-02T00:00:00.000Z';
@@ -169,4 +169,48 @@ test('keeps multiple evidence photos for the same test slot', () => {
     { slotName: 'Bàn phím bật sáng', url: '/uploads/first.png' },
     { slotName: 'Bàn phím bật sáng', url: '/uploads/second.png' },
   ]);
+});
+
+function recordingStepResultsClient(initial: unknown) {
+  const queries: string[] = [];
+  const client = {
+    queries,
+    query: async (text: string) => {
+      queries.push(text);
+      if (/SELECT step_results/.test(text)) return { rows: [{ step_results: initial }], rowCount: 1 };
+      if (/UPDATE inspection_jobs/.test(text)) return { rows: [{ step_results: [] }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => undefined,
+  };
+  return client;
+}
+
+test('applies step result updates under a row lock with a version bump', async () => {
+  const client = recordingStepResultsClient([{ stepId: 'S1', status: 'PASS', note: 'ok' }]);
+
+  const outcome = await applyStepResultsUpdate(
+    'job-1',
+    (current) => ({ found: true, updatedSteps: [{ stepId: 'S1', status: 'PASS', note: 'updated' }] }),
+    async () => client,
+  );
+
+  assert.equal(outcome.found, true);
+  const select = client.queries.find((text) => /SELECT step_results/.test(text));
+  assert.match(select || '', /FOR UPDATE/);
+  const update = client.queries.find((text) => /UPDATE inspection_jobs/.test(text));
+  assert.match(update || '', /version = version \+ 1/);
+});
+
+test('returns found=false when the mutator does not match a step', async () => {
+  const client = recordingStepResultsClient([{ stepId: 'S1', status: 'PASS', note: 'ok' }]);
+
+  const outcome = await applyStepResultsUpdate(
+    'job-1',
+    () => ({ found: false, updatedSteps: [] }),
+    async () => client,
+  );
+
+  assert.equal(outcome.found, false);
+  assert.equal(client.queries.some((text) => /UPDATE inspection_jobs/.test(text)), false);
 });

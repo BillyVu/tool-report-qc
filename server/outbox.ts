@@ -12,7 +12,7 @@ export async function dispatchPendingJobs(channel: ConfirmChannel): Promise<numb
     await client.query('BEGIN');
     const jobs = await client.query(
       `SELECT id, payload FROM background_jobs
-        WHERE status = 'PENDING'
+        WHERE status = 'PENDING' AND type = 'PHOTO_PROCESS'
         ORDER BY created_at
         FOR UPDATE SKIP LOCKED
         LIMIT 25`,

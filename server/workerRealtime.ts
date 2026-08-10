@@ -44,12 +44,24 @@ export interface WorkerAnalysisFailedEvent {
   message: string;
 }
 
+export interface WorkerPhotoQualityResultEvent {
+  type: 'PHOTO_QUALITY_RESULT';
+  photoId: string;
+  stepId: string;
+  slotIndex: number;
+  photoUrl: string;
+  status: 'APPROVED' | 'REJECTED' | 'UNAVAILABLE';
+  message: string;
+  manualOverrideAvailable?: boolean;
+}
+
 export type WorkerSessionEvent =
   | WorkerPhotoSavedEvent
   | WorkerPhotoReceivedEvent
   | WorkerAnalysisQueuedEvent
   | WorkerAnalysisCompletedEvent
   | WorkerAnalysisFailedEvent
+  | WorkerPhotoQualityResultEvent
   | { type: 'READY' };
 
 export class WorkerSessionRealtime {

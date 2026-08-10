@@ -19,6 +19,10 @@ export function isSquare(width: number, height: number): boolean {
   return width > 0 && height > 0 && Math.abs(width / height - 1) <= 0.025;
 }
 
+export function isAspectRatio(width: number, height: number, ratio: number, tolerance = 0.025): boolean {
+  return width > 0 && height > 0 && ratio > 0 && Math.abs(width / height - ratio) <= tolerance;
+}
+
 export function calculateSharpnessFromPixels(pixels: Buffer, width: number, height: number, channels: number): number {
   if (width < 3 || height < 3) return 0;
   let count = 0;

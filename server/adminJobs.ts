@@ -1,8 +1,72 @@
+import { toJsonbParam } from './jsonParam.js';
+
 type TemplateLike = {
   steps?: Array<{ stepId?: string } & Record<string, unknown>>;
 };
 
 export type StepModerationStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+
+export interface StepResultsMutateResult {
+  found: boolean;
+  updatedSteps: unknown;
+}
+
+export interface DbClientLike {
+  query(text: string, values?: unknown[]): Promise<{ rows: any[]; rowCount?: number | null }>;
+  release(): void;
+}
+
+export interface StepResultsUpdateOutcome {
+  found: boolean;
+  row?: any;
+}
+
+/**
+ * Applies a read-modify-write to inspection_jobs.step_results under a row lock so
+ * concurrent writers (photo uploads, admin notes/moderation, Vero analysis) do not
+ * clobber each other with stale snapshots. `version` is still bumped for audit.
+ */
+export async function applyStepResultsUpdate(
+  jobId: string,
+  mutate: (currentStepResults: unknown) => StepResultsMutateResult,
+  acquireClient?: () => Promise<DbClientLike>,
+): Promise<StepResultsUpdateOutcome> {
+  const connect = acquireClient ?? (async () => {
+    const { db } = await import('./db.js');
+    return db.connect();
+  });
+  const client = await connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query(`SELECT step_results FROM inspection_jobs WHERE id = $1 FOR UPDATE`, [jobId]);
+    if (!current.rowCount) {
+      await client.query('COMMIT');
+      return { found: false };
+    }
+    const result = mutate(current.rows[0].step_results);
+    if (!result.found) {
+      await client.query('COMMIT');
+      return { found: false };
+    }
+    const updated = await client.query(
+      `UPDATE inspection_jobs
+          SET step_results = $2,
+              updated_at = now(),
+              version = version + 1
+        WHERE id = $1
+        RETURNING *`,
+      [jobId, toJsonbParam(result.updatedSteps)],
+    );
+    await client.query('COMMIT');
+    return { found: true, row: updated.rows[0] };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 
 interface UploadedPhotoPatch {
   stepId: string;

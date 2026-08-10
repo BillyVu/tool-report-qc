@@ -22,6 +22,7 @@ export interface PhotoSlotConfig {
   label: string;
   photoType: PhotoType;
   captureFrame?: CaptureFrame;
+  aspectRatio?: number;
 }
 
 export interface TextFieldConfig {
@@ -36,11 +37,12 @@ export interface PhotoSlotData {
   label: string;
   photoType?: PhotoType;
   captureFrame?: CaptureFrame;
+  aspectRatio?: number;
   photoUrl?: string;
   aiDetectedText?: string;
   aiResultJson?: Record<string, unknown>;
   manualOverride?: boolean;
-  aiQualityStatus?: 'APPROVED' | 'UNAVAILABLE';
+  aiQualityStatus?: 'APPROVED' | 'REJECTED' | 'UNAVAILABLE' | 'PENDING' | 'NOT_CHECKED';
 }
 
 export interface InspectionStep {
