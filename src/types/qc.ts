@@ -136,6 +136,7 @@ export interface StepResult {
   stepId: string;
   status: StepStatus;
   note: string;
+  sampleSize?: string;
   photoUrl?: string;
   photoSlotsData?: PhotoSlotData[];
   photos?: { url: string; slotName: string; slotIndex?: number }[];

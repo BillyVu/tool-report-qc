@@ -38,6 +38,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
   const [batchNumber, setBatchNumber] = useState('');
   const [productCode, setProductCode] = useState('');
   const [productName, setProductName] = useState('');
+  const [sampleSize, setSampleSize] = useState('120 pcs');
   const [workerName, setWorkerName] = useState('');
   const [line, setLine] = useState('Chuyền 01 - Lắp Ráp');
   const [shift, setShift] = useState('Ca Sáng (06:00 - 14:00)');
@@ -60,10 +61,12 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
             setSelectedTemplateId(tmpls[0].id);
             setProductCode(tmpls[0].productCode);
             setProductName(tmpls[0].productName);
+            setSampleSize(tmpls[0].orderQty || tmpls[0].steps[0]?.sampleSize || '120 pcs');
           } else {
             setSelectedTemplateId('');
             setProductCode('');
             setProductName('');
+            setSampleSize('120 pcs');
           }
         })
         .catch((error) => setErrorMessage(error instanceof Error ? error.message : 'Không tải được mẫu checklist từ database.'))
@@ -87,6 +90,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
     if (selected) {
       setProductCode(selected.productCode);
       setProductName(selected.productName);
+      setSampleSize(selected.orderQty || selected.steps[0]?.sampleSize || '120 pcs');
     }
   };
 
@@ -112,11 +116,22 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
         const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
         const randomSuffix = Math.floor(100 + Math.random() * 900);
         const newJobId = `JOB-${dateStr}-${randomSuffix}`;
+
+        const customSampleSize = sampleSize.trim() || selectedTemplate.orderQty || '120 pcs';
+        const updatedTemplateSnapshot: ChecklistTemplate = {
+          ...selectedTemplate,
+          orderQty: customSampleSize,
+          steps: selectedTemplate.steps.map((s) => ({
+            ...s,
+            sampleSize: customSampleSize || s.sampleSize || '120 pcs'
+          }))
+        };
+
         const newJob = await adminApi.createJob({
           externalId: newJobId,
           batchNumber: batchNumber.trim(),
           templateId: selectedTemplate.id,
-          templateSnapshot: selectedTemplate,
+          templateSnapshot: updatedTemplateSnapshot,
           productCode: productCode.trim() || selectedTemplate.productCode,
           productName: productName.trim() || selectedTemplate.productName,
           workerName: workerName.trim() || 'Công nhân QC',
@@ -264,6 +279,24 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 />
               </div>
+            </div>
+
+            {/* Cỡ Mẫu Kiểm Tra / Sample Size */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700 block">
+                  Cỡ Mẫu Kiểm Tra (Sample Size / Số lượng kiểm) <span className="text-red-500">*</span>
+                </label>
+                <span className="text-[11px] font-medium text-slate-500">Mẫu kiểm mặc định cho lô</span>
+              </div>
+              <input
+                type="text"
+                required
+                value={sampleSize}
+                onChange={(e) => setSampleSize(e.target.value)}
+                placeholder="VD: 120 pcs, 117 pcs hoặc 100%"
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
             </div>
 
             {/* Production Line & Shift (Temporarily hidden) */}

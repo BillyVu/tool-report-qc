@@ -21,7 +21,8 @@ import {
   ShieldCheck,
   Save,
   Plus,
-  Trash2
+  Trash2,
+  Package
 } from 'lucide-react';
 import { CaptureFrame, InspectionJob, ChecklistTemplate, StepResult, PhotoSlotData, PhotoType, DefectItem, PackagingInfoData, OtherInfoData } from '../types/qc';
 import { workerSessionApi } from '../services/workerSessionApi';
@@ -196,6 +197,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
   const [sessionError, setSessionError] = useState('');
 
   const [stepResults, setStepResults] = useState<StepResult[]>([]);
+  const [globalSampleSize, setGlobalSampleSize] = useState<string>('120 pcs');
   const [workerName, setWorkerName] = useState('');
   
   // Check-In Form & MAC Tracking State
@@ -261,6 +263,9 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
         setWorkerName(data.job.workerName || '');
       }
 
+      const defaultSample = data.job.templateSnapshot?.orderQty || data.template.orderQty || data.template.steps[0]?.sampleSize || '120 pcs';
+      setGlobalSampleSize(defaultSample);
+
       // Initialize step results based on template steps or existing job results
       const initialResults: StepResult[] = data.template.steps.map(step => {
         const existing = data.job?.stepResults.find(r => r.stepId === step.stepId);
@@ -291,6 +296,7 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
           stepId: step.stepId,
           status: existing?.status || 'PENDING',
           note: existing?.note || '',
+          sampleSize: existing?.sampleSize || step.sampleSize || defaultSample,
           photoUrl: existing?.photoUrl || undefined,
           photoSlotsData: existing?.photoSlotsData || slotsData,
           textValue: existing?.textValue || '',
@@ -736,13 +742,22 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
     await handlePhotoUploadForSlot(target.stepId, target.slotIndex, file, target.source, target.captureFrame, sharpnessScore, false, outputAspect ?? target.aspectRatio);
   };
 
-  // Handles Note or Text change
+  // Handles Note, Text or Sample Size change
   const handleStepNoteChange = (stepId: string, note: string) => {
     setStepResults(prev => prev.map(sr => sr.stepId === stepId ? { ...sr, note } : sr));
   };
 
   const handleStepTextChange = (stepId: string, textValue: string) => {
     setStepResults(prev => prev.map(sr => sr.stepId === stepId ? { ...sr, textValue } : sr));
+  };
+
+  const handleStepSampleSizeChange = (stepId: string, sampleSize: string) => {
+    setStepResults(prev => prev.map(sr => sr.stepId === stepId ? { ...sr, sampleSize } : sr));
+  };
+
+  const handleApplyGlobalSampleSize = (newSize: string) => {
+    setGlobalSampleSize(newSize);
+    setStepResults(prev => prev.map(sr => ({ ...sr, sampleSize: newSize })));
   };
 
   // Defects Finding (A-1) Handlers
@@ -1067,6 +1082,31 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
               </button>
             </div>
           </div>
+
+          {/* Editable Global Sample Size Badge */}
+          <div className="flex flex-col gap-1 bg-blue-50/90 border border-blue-200 p-3 rounded-xl text-blue-900 text-xs shrink-0 sm:min-w-64">
+            <span className="text-[11px] text-blue-700 font-bold flex items-center gap-1.5">
+              <Package className="w-4 h-4 text-blue-600 shrink-0" />
+              Cỡ Mẫu Kiểm Tra Lô (Sample Size):
+            </span>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                type="text"
+                value={globalSampleSize}
+                onChange={(e) => setGlobalSampleSize(e.target.value)}
+                placeholder="VD: 120 pcs"
+                className="bg-white border border-blue-300 rounded-lg px-2.5 py-1 text-xs font-bold text-blue-900 focus:outline-none focus:border-blue-500 w-full shadow-inner"
+              />
+              <button
+                type="button"
+                onClick={() => handleApplyGlobalSampleSize(globalSampleSize)}
+                className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] rounded-lg shrink-0 transition-colors shadow-sm"
+                title="Áp dụng cỡ mẫu này đồng loạt cho tất cả các bước kiểm tra"
+              >
+                Áp dụng tất cả
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Live Overall Summary */}
@@ -1208,18 +1248,22 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     <div>
                       <h3 className="font-bold text-sm text-slate-900">{step.title}</h3>
                       <p className="text-xs text-slate-500 mt-0.5">Tiêu chuẩn: <span className="text-slate-700">{step.passCriteria}</span></p>
-                      {(() => {
-                        const progress = stepPhotoProgress(step, stepRes);
-                        if (progress.required <= 0) return null;
-                        const complete = progress.actual >= progress.required;
-                        return (
-                          <p className="mt-1.5 text-[11px] font-bold inline-flex items-center gap-1.5">
-                            <span className={`px-2 py-0.5 rounded-full border ${complete ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                      <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                        <span className="px-2 py-0.5 rounded-md bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-bold inline-flex items-center gap-1">
+                          <Package className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                          Cỡ mẫu: {stepRes?.sampleSize || step.sampleSize || globalSampleSize || '120 pcs'}
+                        </span>
+                        {(() => {
+                          const progress = stepPhotoProgress(step, stepRes);
+                          if (progress.required <= 0) return null;
+                          const complete = progress.actual >= progress.required;
+                          return (
+                            <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${complete ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
                               Ảnh: {progress.actual}/{progress.required}
                             </span>
-                          </p>
-                        );
-                      })()}
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
 
@@ -1345,8 +1389,22 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                   </div>
                 )}
 
-                {/* Text Input / Note Input */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                {/* Sample Size, Text Input & Note Input */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700 block flex items-center gap-1">
+                      <Package className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                      <span>Cỡ mẫu bước này:</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={stepRes?.sampleSize || ''}
+                      onChange={(e) => handleStepSampleSizeChange(step.stepId, e.target.value)}
+                      placeholder={step.sampleSize || globalSampleSize || 'VD: 120 pcs'}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-blue-800 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
                   {step.inputType !== 'PHOTO' && (
                     <div className="space-y-1">
                       <label className="text-xs font-semibold text-slate-700 block">
@@ -1362,14 +1420,14 @@ export const WorkerSessionPortalView: React.FC<WorkerSessionPortalViewProps> = (
                     </div>
                   )}
 
-                  <div className="space-y-1 sm:col-span-1">
+                  <div className={`space-y-1 ${step.inputType === 'PHOTO' ? 'sm:col-span-2' : 'sm:col-span-1'}`}>
                     <label className="text-xs font-semibold text-slate-700 block">Ghi chú công nhân:</label>
-                    <textarea
-                      rows={3}
+                    <input
+                      type="text"
                       value={stepRes?.note || ''}
                       onChange={(e) => handleStepNoteChange(step.stepId, e.target.value)}
                       placeholder="Ghi chú kết quả kiểm định..."
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500 resize-y"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-blue-500"
                     />
                   </div>
                 </div>

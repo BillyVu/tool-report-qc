@@ -17,12 +17,14 @@ test('builds initial step results from the saved checklist template snapshot', (
       stepId: 'S1',
       status: 'PENDING',
       note: 'Chờ công nhân kiểm tra và tải ảnh thực tế.',
+      sampleSize: '120 pcs',
       timestamp: now,
     },
     {
       stepId: 'S2',
       status: 'PENDING',
       note: 'Chờ công nhân kiểm tra và tải ảnh thực tế.',
+      sampleSize: '120 pcs',
       timestamp: now,
     },
   ]);

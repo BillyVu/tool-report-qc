@@ -1,7 +1,8 @@
 import { toJsonbParam } from './jsonParam.js';
 
 type TemplateLike = {
-  steps?: Array<{ stepId?: string } & Record<string, unknown>>;
+  orderQty?: string;
+  steps?: Array<{ stepId?: string; sampleSize?: string } & Record<string, unknown>>;
 };
 
 export type StepModerationStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
@@ -134,12 +135,14 @@ export function calculateExtendedSessionExpiry(currentExpiresAt: Date | string, 
 
 export function buildInitialStepResults(templateSnapshot: TemplateLike, timestamp = new Date().toISOString()) {
   const steps = Array.isArray(templateSnapshot?.steps) ? templateSnapshot.steps : [];
+  const defaultOrderQty = typeof templateSnapshot?.orderQty === 'string' && templateSnapshot.orderQty.trim() ? templateSnapshot.orderQty.trim() : '120 pcs';
   return steps
     .filter((step) => typeof step?.stepId === 'string' && step.stepId.trim())
     .map((step) => ({
       stepId: step.stepId,
       status: 'PENDING' as const,
       note: 'Chờ công nhân kiểm tra và tải ảnh thực tế.',
+      sampleSize: typeof step.sampleSize === 'string' && step.sampleSize.trim() ? step.sampleSize.trim() : defaultOrderQty,
       timestamp,
     }));
 }

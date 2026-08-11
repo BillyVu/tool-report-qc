@@ -51,11 +51,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
 
   // New Sections State
   const [defectsFindingData, setDefectsFindingData] = useState<DefectItem[]>(
-    template?.defectsFindingData || [
-      { id: 'DEF_1', description: 'Surface scratch 016724000204989', defectType: 'Minor', count: 1 },
-      { id: 'DEF_2', description: 'Scratch Protected Film 016724000199288', defectType: 'Minor', count: 1 },
-      { id: 'DEF_3', description: "Wrinkled IMEI's seal 016724000176104", defectType: 'Minor', count: 1 }
-    ]
+    template?.defectsFindingData || []
   );
 
   const [packagingInfoData, setPackagingInfoData] = useState<PackagingInfoData>(

@@ -548,9 +548,9 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                             <h3 className="text-sm font-bold text-slate-950">Bằng chứng & ghi chú</h3>
                             <p className="mt-0.5 text-[11px] font-medium text-slate-500">Tất cả dữ liệu cần duyệt của bước hiện tại</p>
                           </div>
-                          {activeStepDef?.sampleSize && (
-                            <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">
-                              Sample: {activeStepDef.sampleSize}
+                          {(activeStep.sampleSize || activeStepDef?.sampleSize) && (
+                            <span className="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-900">
+                              Sample thực tế: {activeStep.sampleSize || activeStepDef?.sampleSize}
                             </span>
                           )}
                         </div>

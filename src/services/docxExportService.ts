@@ -296,6 +296,44 @@ async function convertImageBufferToPng(data: Uint8Array, mimeType: string): Prom
   }
 }
 
+function getPngDimensions(data: Uint8Array): { width: number; height: number } | null {
+  if (data.length < 24) return null;
+  if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) {
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const width = view.getUint32(16);
+    const height = view.getUint32(20);
+    if (width > 0 && height > 0) return { width, height };
+  }
+  return null;
+}
+
+function getJpgDimensions(data: Uint8Array): { width: number; height: number } | null {
+  if (data.length < 10) return null;
+  if (data[0] !== 0xff || data[1] !== 0xd8) return null;
+
+  let offset = 2;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  while (offset < data.length - 8) {
+    if (data[offset] !== 0xff) {
+      offset++;
+      continue;
+    }
+    const marker = data[offset + 1];
+    if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+      const height = view.getUint16(offset + 5);
+      const width = view.getUint16(offset + 7);
+      if (width > 0 && height > 0) return { width, height };
+    }
+    const length = view.getUint16(offset + 2);
+    offset += 2 + length;
+  }
+  return null;
+}
+
+function getImageDimensions(data: Uint8Array): { width: number; height: number } | null {
+  return getPngDimensions(data) || getJpgDimensions(data);
+}
+
 async function fetchImageForDocx(jobId: string, url: string, type: SourceImageType | null): Promise<{ data: Uint8Array; type: ExportImageType } | null> {
   const exportUrl = resolveEvidenceImageUrl(jobId, url);
   const adminKey = getAdminApiKey();
@@ -314,56 +352,116 @@ async function fetchImageForDocx(jobId: string, url: string, type: SourceImageTy
   return null;
 }
 
+function createExportOverlay(jobId: string) {
+  if (typeof document === 'undefined') return { updateMessage: () => {}, remove: () => {} };
+
+  const overlayId = 'qc-docx-export-overlay';
+  const existing = document.getElementById(overlayId);
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = overlayId;
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;background-color:rgba(15,23,42,0.75);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;';
+
+  const card = document.createElement('div');
+  card.style.cssText = 'background-color:#ffffff;border-radius:20px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.35);border:1px solid #cbd5e1;max-width:400px;width:100%;padding:28px;text-align:center;box-sizing:border-box;';
+
+  card.innerHTML = `
+    <style>
+      @keyframes docxSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      @keyframes docxPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    </style>
+    <div style="width:68px;height:68px;border-radius:20px;background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);border:1px solid #bfdbfe;color:#2563eb;display:flex;align-items:center;justify-content:center;margin:0 auto 18px auto;box-shadow:0 4px 12px rgba(37,99,235,0.15);">
+      <svg style="width:36px;height:36px;animation:docxSpin 0.9s linear infinite;" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+    </div>
+    <h3 style="font-size:17px;font-weight:800;color:#0f172a;margin:0 0 6px 0;letter-spacing:-0.01em;">Đang Tạo File Word Báo Cáo QC...</h3>
+    <p id="docx-export-subtitle" style="font-size:13px;color:#475569;margin:0 0 18px 0;line-height:1.45;font-weight:500;">Đang khởi tạo & tải dữ liệu kiểm định...</p>
+    <div style="width:100%;background-color:#f1f5f9;border-radius:9999px;height:6px;overflow:hidden;margin-bottom:14px;">
+      <div style="background:linear-gradient(90deg, #2563eb 0%, #3b82f6 100%);height:100%;width:100%;border-radius:9999px;animation:docxPulse 1.4s ease-in-out infinite;"></div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;color:#64748b;font-weight:600;">
+      <span>Mã Lệnh:</span>
+      <span style="font-family:monospace;background-color:#f8fafc;padding:2px 8px;border-radius:6px;border:1px solid #e2e8f0;color:#0284c7;">${jobId}</span>
+    </div>
+  `;
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  return {
+    updateMessage: (msg: string) => {
+      const sub = document.getElementById('docx-export-subtitle');
+      if (sub) sub.textContent = msg;
+    },
+    remove: () => {
+      const el = document.getElementById(overlayId);
+      if (el) el.remove();
+    }
+  };
+}
+
 /**
  * Creates a standard native OpenXML Microsoft Word (.docx) document.
  * Guarantees zero "corrupted file" or "file extension mismatch" errors when opened in Word / Office 365 / WPS.
  */
 export async function generateDocxReport(job: InspectionJob, template?: ChecklistTemplate): Promise<void> {
-  const exportJob = await adminApi.getJob(job.id).catch(() => job);
-  const matchedTemplate = template || exportJob.templateSnapshot;
+  const overlay = createExportOverlay(job.id);
+  try {
+    overlay.updateMessage('Đang tải dữ liệu lệnh kiểm tra...');
+    const exportJob = await adminApi.getJob(job.id).catch(() => job);
+    const matchedTemplate = template || exportJob.templateSnapshot;
 
-  if (matchedTemplate?.docxTemplateName?.trim() === X530_CUSTOMER_TEMPLATE_NAME) {
-    const report = await adminApi.downloadCustomerReport(exportJob.id);
-    saveAs(report, `[ATT_X530_Inspection_Report]_${exportJob.id}.docx`);
-    await adminApi.recordExport(exportJob.id);
-    return;
-  }
-
-  const dateStr = new Date(exportJob.createdAt).toLocaleDateString('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-
-  const completedDateStr = exportJob.completedAt
-    ? new Date(exportJob.completedAt).toLocaleDateString('vi-VN', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    : 'Chưa hoàn thành';
-
-  // Process all image buffers for step results, including multi-slot captures.
-  const stepImagesMap: Record<string, StepImageBuffer[]> = {};
-  for (const sr of exportJob.stepResults) {
-    const stepDef = matchedTemplate?.steps.find((step) => step.stepId === sr.stepId);
-    const reportImages = getStepEvidenceSlots(sr, stepDef);
-    stepImagesMap[sr.stepId] = [];
-    for (const image of reportImages) {
-      const preparedImage = image.url ? await fetchImageForDocx(exportJob.id, image.url, getImageTypeFromUrl(image.url)) : null;
-      stepImagesMap[sr.stepId].push({
-        label: image.label,
-        type: preparedImage?.type || null,
-        data: preparedImage?.data || null,
-      });
+    if (matchedTemplate?.docxTemplateName?.trim() === X530_CUSTOMER_TEMPLATE_NAME) {
+      overlay.updateMessage('Đang kết xuất báo cáo mẫu khách hàng X530...');
+      const report = await adminApi.downloadCustomerReport(exportJob.id);
+      saveAs(report, `[ATT_X530_Inspection_Report]_${exportJob.id}.docx`);
+      await adminApi.recordExport(exportJob.id);
+      return;
     }
-  }
 
-  const veroLogo = await fetchImageBuffer('/vero-qc-icon.png');
+    const dateStr = new Date(exportJob.createdAt).toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const completedDateStr = exportJob.completedAt
+      ? new Date(exportJob.completedAt).toLocaleDateString('vi-VN', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      : 'Chưa hoàn thành';
+
+    // Process all image buffers for step results, including multi-slot captures.
+    const stepImagesMap: Record<string, StepImageBuffer[]> = {};
+    let stepIndex = 0;
+    const totalSteps = exportJob.stepResults.length;
+
+    for (const sr of exportJob.stepResults) {
+      stepIndex++;
+      overlay.updateMessage(`Đang tải & xử lý hình ảnh bước ${stepIndex}/${totalSteps}...`);
+      const stepDef = matchedTemplate?.steps.find((step) => step.stepId === sr.stepId);
+      const reportImages = getStepEvidenceSlots(sr, stepDef);
+      stepImagesMap[sr.stepId] = [];
+      for (const image of reportImages) {
+        const preparedImage = image.url ? await fetchImageForDocx(exportJob.id, image.url, getImageTypeFromUrl(image.url)) : null;
+        stepImagesMap[sr.stepId].push({
+          label: image.label,
+          type: preparedImage?.type || null,
+          data: preparedImage?.data || null,
+        });
+      }
+    }
+
+    overlay.updateMessage('Đang tổng hợp các bảng thông số & kết cấu văn bản Word...');
+    const veroLogo = await fetchImageBuffer('/vero-qc-icon.png');
 
   // Common borders for tables - 0.5pt solid black border matching standard report tables
   const cellBorder = {
@@ -457,6 +555,8 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
     ],
   });
 
+  const sampleSizeVal = exportJob.templateSnapshot?.orderQty || matchedTemplate?.orderQty || exportJob.stepResults?.[0]?.sampleSize || "120";
+
   // Table 2: FQC Order Quantity Summary Table (Image 1)
   const fqcTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
@@ -486,7 +586,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: clientName, size: 16 })] })] }),
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: orderQty, size: 16 })] })] }),
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dateStr.split(' ')[0] || dateStr, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "120", size: 16 })] })] }),
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sampleSizeVal, size: 16 })] })] }),
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "100%", size: 16 })] })] }),
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.status === 'COMPLETED' ? orderQty : '0', size: 16 })] })] }),
         ],
@@ -547,8 +647,99 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
   });
 
   // Table 4: Section A-1) AQL and Defects Finding Table (Image 2)
-  const defectsList = exportJob.defectsFindingData || matchedTemplate?.defectsFindingData || [];
+  const aqlStandardText = matchedTemplate?.aqlStandard || "ISO 2859-1";
+  const inspectionLevelText = matchedTemplate?.inspectionLevel || "Full inspection";
+
+  const rawDefects = Array.isArray(exportJob.defectsFindingData)
+    ? exportJob.defectsFindingData
+    : (Array.isArray(matchedTemplate?.defectsFindingData) ? matchedTemplate.defectsFindingData : []);
+  const defectsList = rawDefects.filter(d => d && typeof d.description === 'string' && d.description.trim().length > 0);
+  
   const defectRows: TableRow[] = [
+    new TableRow({
+      children: [
+        new TableCell({
+          borders: cellBorder,
+          shading: { fill: "1E293B", type: ShadingType.CLEAR },
+          columnSpan: 5,
+          children: [new Paragraph({ children: [new TextRun({ text: "A-1) AQL and Defects Finding", bold: true, color: "FFFFFF", size: 18 })] })]
+        })
+      ]
+    }),
+    new TableRow({
+      children: [
+        new TableCell({
+          borders: cellBorder,
+          columnSpan: 3,
+          children: [new Paragraph({ children: [new TextRun({ text: `Inspection Sampling Standard Adopted:   ☑ ${aqlStandardText}`, size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          columnSpan: 2,
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Nonconformity (defective)", bold: true, size: 16 })] })]
+        })
+      ]
+    }),
+    new TableRow({
+      children: [
+        new TableCell({
+          borders: cellBorder,
+          columnSpan: 2,
+          children: [new Paragraph({ children: [new TextRun({ text: "Inspection Plan:  Single sampling plans for normal Inspection", size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Critical", bold: true, size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Major", bold: true, size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Minor", bold: true, size: 16 })] })]
+        }),
+      ]
+    }),
+    new TableRow({
+      children: [
+        new TableCell({
+          borders: cellBorder,
+          columnSpan: 2,
+          children: [new Paragraph({ children: [new TextRun({ text: `Inspection Level:  ${inspectionLevelText}`, size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "AQL:", bold: true, size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Not Allowed", size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 16 })] })]
+        }),
+      ]
+    }),
+    new TableRow({
+      children: [
+        new TableCell({
+          borders: cellBorder,
+          columnSpan: 2,
+          children: [new Paragraph({ children: [new TextRun({ text: "Inspection with:  ☑ Specific check list    ☐ Golden sample    ☐ General check list", size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "Sample Size:", bold: true, size: 16 })] })]
+        }),
+        new TableCell({
+          borders: cellBorder,
+          columnSpan: 2,
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sampleSizeVal, bold: true, size: 18 })] })]
+        }),
+      ]
+    }),
     new TableRow({
       children: [
         new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 40, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Defect Description", bold: true, size: 18 })] })] }),
@@ -729,18 +920,33 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
     const stepDef = matchedTemplate?.steps.find(s => s.stepId === sr.stepId);
     const stepTitle = stepDef ? stepDef.title : `Bước ${sr.stepId}`;
     const imageBuffers = stepImagesMap[sr.stepId] || [];
-    const imageWidth = mmToDocxPx(stepDef?.mapping?.imageWidthMm, 60);
-    const imageHeight = mmToDocxPx(stepDef?.mapping?.imageHeightMm, 45);
+    const targetMaxWidth = mmToDocxPx(stepDef?.mapping?.imageWidthMm, 60);
+    const targetMaxHeight = mmToDocxPx(stepDef?.mapping?.imageHeightMm, 45);
 
     const imageChildren: (Paragraph)[] = [];
     const validImages = imageBuffers.filter((image): image is StepImageBuffer & { data: Uint8Array; type: ExportImageType } => !!image.data && !!image.type);
     if (imageBuffers.length > 0) {
-      imageBuffers.forEach((image, imageIndex) => {
+      imageBuffers.forEach((image) => {
         if (!image.data || !image.type) {
           imageChildren.push(buildMissingEvidenceParagraph(image.label));
           return;
         }
         try {
+          // Calculate aspect-ratio-preserved dimensions so images retain natural proportions instead of stretching
+          const dims = getImageDimensions(image.data);
+          let finalWidth = targetMaxWidth;
+          let finalHeight = targetMaxHeight;
+
+          if (dims && dims.width > 0 && dims.height > 0) {
+            const aspect = dims.width / dims.height;
+            finalWidth = targetMaxWidth;
+            finalHeight = Math.round(targetMaxWidth / aspect);
+            if (finalHeight > targetMaxHeight) {
+              finalHeight = targetMaxHeight;
+              finalWidth = Math.round(targetMaxHeight * aspect);
+            }
+          }
+
           imageChildren.push(
             new Paragraph({
               alignment: AlignmentType.CENTER,
@@ -761,8 +967,8 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
                 new ImageRun({
                   data: image.data,
                   transformation: {
-                    width: imageWidth,
-                    height: imageHeight,
+                    width: finalWidth,
+                    height: finalHeight,
                   },
                   type: image.type
                 }),
@@ -801,7 +1007,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
           // Col 2: Sample size
           new TableCell({
             borders: cellBorder,
-            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: stepDef?.sampleSize || "120pcs", size: 18 })] })]
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "120pcs", size: 18 })] })]
           }),
           // Col 3: Test Photo
           new TableCell({
@@ -816,7 +1022,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
                 alignment: AlignmentType.CENTER,
                 children: [
                   new TextRun({
-                    text: sr.status === 'PASS' ? "117 pcs\nPass" : sr.status === 'FAIL' ? "Defective" : "Pending",
+                    text: sr.status === 'PASS' ? `${sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "117 pcs"}\nPass` : sr.status === 'FAIL' ? "Defective" : "Pending",
                     bold: true,
                     color: sr.status === 'PASS' ? "15803D" : sr.status === 'FAIL' ? "B91C1C" : "B45309",
                     size: 18
@@ -999,10 +1205,14 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
   });
 
   // Pack native OpenXML binary stream and download as .docx
-  const blob = await Packer.toBlob(doc);
-  const sanitizedJobId = exportJob.id.replace(/[^a-zA-Z0-9-]/g, '_');
-  const fileName = `[Bao_Cao_QC]_${sanitizedJobId}_${new Date().toISOString().slice(0, 10)}.docx`;
+    overlay.updateMessage('Đang đóng gói file .docx và hoàn tất tải xuống...');
+    const blob = await Packer.toBlob(doc);
+    const sanitizedJobId = exportJob.id.replace(/[^a-zA-Z0-9-]/g, '_');
+    const fileName = `[Bao_Cao_QC]_${sanitizedJobId}_${new Date().toISOString().slice(0, 10)}.docx`;
 
-  saveAs(blob, fileName);
-  await adminApi.recordExport(exportJob.id);
+    saveAs(blob, fileName);
+    await adminApi.recordExport(exportJob.id);
+  } finally {
+    overlay.remove();
+  }
 }
