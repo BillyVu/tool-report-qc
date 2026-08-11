@@ -707,9 +707,9 @@ app.get('/api/admin/jobs/:jobId/customer-report.docx', requireAdmin, async (req,
     worker_name: dbJob.worker_name,
     created_at: dbJob.created_at,
     template_snapshot: dbJob.template_snapshot,
-    defectsFindingData: dbJob.defects_finding_data || dbJob.template_snapshot?.defectsFindingData || [],
-    packagingInfoData: dbJob.packaging_info_data || dbJob.template_snapshot?.packagingInfoData || {},
-    otherInfoData: dbJob.other_info_data || dbJob.template_snapshot?.otherInfoData || {},
+    defectsFindingData: Array.isArray(dbJob.defects_finding_data) ? dbJob.defects_finding_data : [],
+    packagingInfoData: dbJob.packaging_info_data || {},
+    otherInfoData: dbJob.other_info_data || {},
     stepResults: dbJob.step_results || [],
   };
 
