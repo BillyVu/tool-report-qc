@@ -98,6 +98,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
     slotLabel: string;
     captureFrame: CaptureFrame;
     aspectRatio?: number;
+    photoUrl?: string;
   } | null>(null);
   const [isReplacingPhoto, setIsReplacingPhoto] = useState(false);
 
@@ -519,6 +520,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                                           slotLabel: photo.slotName || `Slot ${photo.slotIndex}`,
                                           captureFrame: slotDef?.captureFrame || 'RECTANGLE',
                                           aspectRatio: slotDef?.aspectRatio,
+                                          photoUrl: photo.url,
                                         });
                                       }}
                                       disabled={isReplacingPhoto}
@@ -952,9 +954,10 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
       {editPhotoSlot && (
         <PhotoCaptureModal
           key={`admin-edit:${currentJob.id}:${editPhotoSlot.stepId}:${editPhotoSlot.slotIndex}`}
-          mode="CAMERA"
+          mode="UPLOAD"
           frame={editPhotoSlot.captureFrame}
           aspectRatio={editPhotoSlot.aspectRatio}
+          initialImageUrl={editPhotoSlot.photoUrl}
           slotLabel={editPhotoSlot.slotLabel}
           onClose={() => setEditPhotoSlot(null)}
           onComplete={(file, sharpnessScore, outputAspect) => {
