@@ -99,7 +99,16 @@ interface CustomerReportJob {
   batch_number: string;
   worker_name?: string | null;
   created_at: string | Date;
-  template_snapshot?: { docxTemplateName?: string };
+  template_snapshot?: {
+    docxTemplateName?: string;
+    steps?: any[];
+    cartonSpec?: string;
+    deviceSpec?: string;
+  };
+  defectsFindingData?: any[];
+  packagingInfoData?: any;
+  otherInfoData?: any;
+  stepResults?: any[];
 }
 
 export interface CustomerReportPhoto {
@@ -109,51 +118,67 @@ export interface CustomerReportPhoto {
   created_at: string | Date;
 }
 
-function replaceTextAcrossRuns(xml: string, replacements: Record<string, string>): string {
-  const document = new DOMParser().parseFromString(xml, 'application/xml');
-  const paragraphs = document.getElementsByTagNameNS(WORD_NS, 'p');
+/**
+ * Replaces placeholders inside any XML element or Document.
+ * Supports placeholders split across multiple <w:t> runs.
+ */
+function replaceTextInElement(element: Element | Document, replacements: Record<string, string>): void {
+  const paragraphs = element.getElementsByTagNameNS(WORD_NS, 'p');
+  for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+    const p = paragraphs.item(pIdx);
+    if (!p) continue;
+    const textNodes = p.getElementsByTagNameNS(WORD_NS, 't');
+    if (!textNodes || textNodes.length === 0) continue;
 
-  for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex += 1) {
-    const textNodes = paragraphs.item(paragraphIndex)?.getElementsByTagNameNS(WORD_NS, 't');
-    if (!textNodes?.length) continue;
+    const nodes = Array.from({ length: textNodes.length }, (_, index) => textNodes.item(index)).filter((n): n is Element => !!n);
+    let values = nodes.map((node) => node.textContent || '');
+    let combined = values.join('');
 
     for (const [source, replacement] of Object.entries(replacements)) {
-      const nodes = Array.from({ length: textNodes.length }, (_, index) => textNodes.item(index)).filter(Boolean);
-      const values = nodes.map((node) => node?.textContent || '');
-      const combined = values.join('');
-      const matchStart = combined.indexOf(source);
-      if (matchStart < 0) continue;
+      let matchIdx = combined.indexOf(source);
+      while (matchIdx >= 0) {
+        const matchEnd = matchIdx + source.length;
+        let offset = 0;
+        let startNodeIndex = -1;
+        let endNodeIndex = -1;
+        let startOffset = 0;
+        let endOffset = 0;
 
-      const matchEnd = matchStart + source.length;
-      let offset = 0;
-      let startNodeIndex = -1;
-      let endNodeIndex = -1;
-      let startOffset = 0;
-      let endOffset = 0;
-
-      values.forEach((value, index) => {
-        const nextOffset = offset + value.length;
-        if (startNodeIndex < 0 && matchStart >= offset && matchStart < nextOffset) {
-          startNodeIndex = index;
-          startOffset = matchStart - offset;
+        for (let idx = 0; idx < values.length; idx++) {
+          const val = values[idx];
+          const nextOffset = offset + val.length;
+          if (startNodeIndex < 0 && matchIdx >= offset && matchIdx < nextOffset) {
+            startNodeIndex = idx;
+            startOffset = matchIdx - offset;
+          }
+          if (endNodeIndex < 0 && matchEnd > offset && matchEnd <= nextOffset) {
+            endNodeIndex = idx;
+            endOffset = matchEnd - offset;
+          }
+          offset = nextOffset;
         }
-        if (endNodeIndex < 0 && matchEnd > offset && matchEnd <= nextOffset) {
-          endNodeIndex = index;
-          endOffset = matchEnd - offset;
-        }
-        offset = nextOffset;
-      });
 
-      if (startNodeIndex < 0 || endNodeIndex < 0) continue;
-      const prefix = values[startNodeIndex].slice(0, startOffset);
-      const suffix = values[endNodeIndex].slice(endOffset);
-      if (nodes[startNodeIndex]) nodes[startNodeIndex]!.textContent = `${prefix}${replacement}${suffix}`;
-      for (let index = startNodeIndex + 1; index <= endNodeIndex; index += 1) {
-        if (nodes[index]) nodes[index]!.textContent = '';
+        if (startNodeIndex >= 0 && endNodeIndex >= 0) {
+          const prefix = values[startNodeIndex].slice(0, startOffset);
+          const suffix = values[endNodeIndex].slice(endOffset);
+          nodes[startNodeIndex].textContent = `${prefix}${replacement}${suffix}`;
+          for (let index = startNodeIndex + 1; index <= endNodeIndex; index += 1) {
+            nodes[index].textContent = '';
+          }
+          values = nodes.map((node) => node.textContent || '');
+          combined = values.join('');
+        } else {
+          break;
+        }
+        matchIdx = combined.indexOf(source);
       }
     }
   }
+}
 
+function replaceTextAcrossRuns(xml: string, replacements: Record<string, string>): string {
+  const document = new DOMParser().parseFromString(xml, 'application/xml');
+  replaceTextInElement(document, replacements);
   return new XMLSerializer().serializeToString(document);
 }
 
@@ -176,6 +201,226 @@ export function isCustomerDocxTemplate(templateName?: string | null) {
   return basename(templateName || '') === X530_TEMPLATE_NAME;
 }
 
+function getNextRelationshipId(relsDom: Document): string {
+  const relationships = relsDom.getElementsByTagName('Relationship');
+  let maxId = 0;
+  for (let i = 0; i < relationships.length; i++) {
+    const id = relationships.item(i)?.getAttribute('Id') || '';
+    const match = id.match(/^rId(\d+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > maxId) maxId = num;
+    }
+  }
+  return `rId${maxId + 1}`;
+}
+
+function populateDefectsTable(documentDom: Document, defects: any[]) {
+  const rows = documentDom.getElementsByTagNameNS(WORD_NS, 'tr');
+  let templateRow: Element | null = null;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows.item(i);
+    if (!row) continue;
+    const textContent = row.textContent || '';
+    if (textContent.includes('{{defect_desc}}')) {
+      templateRow = row;
+      break;
+    }
+  }
+
+  if (!templateRow || !templateRow.parentNode) return;
+
+  const parentTable = templateRow.parentNode;
+
+  if (defects.length === 0) {
+    const emptyRow = templateRow.cloneNode(true) as Element;
+    replaceTextInElement(emptyRow, {
+      '{{defect_desc}}': 'No defect',
+      '{{defect_photo}}': 'N/A',
+      '{{defect_crit}}': '--',
+      '{{defect_maj}}': '--',
+      '{{defect_min}}': '--',
+    });
+    parentTable.insertBefore(emptyRow, templateRow);
+  } else {
+    defects.forEach((defect) => {
+      const isCritical = defect.defectType === 'Critical';
+      const isMajor = defect.defectType === 'Major';
+      const isMinor = defect.defectType === 'Minor' || (!isCritical && !isMajor);
+      
+      const newRow = templateRow!.cloneNode(true) as Element;
+      replaceTextInElement(newRow, {
+        '{{defect_desc}}': defect.description || '',
+        '{{defect_photo}}': defect.photos?.length ? '[Photo Attached]' : 'N/A',
+        '{{defect_crit}}': isCritical ? String(defect.count || 1) : '',
+        '{{defect_maj}}': isMajor ? String(defect.count || 1) : '',
+        '{{defect_min}}': isMinor ? String(defect.count || 1) : '',
+      });
+      parentTable.insertBefore(newRow, templateRow);
+    });
+  }
+
+  parentTable.removeChild(templateRow);
+}
+
+async function populateStepsTable(
+  documentDom: Document,
+  relsDom: Document,
+  zip: PizZip,
+  job: any,
+  photos: CustomerReportPhoto[],
+  uploadsDirectory: string
+) {
+  const rows = documentDom.getElementsByTagNameNS(WORD_NS, 'tr');
+  let templateRow: Element | null = null;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows.item(i);
+    if (!row) continue;
+    const textContent = row.textContent || '';
+    if (textContent.includes('{{step_title}}')) {
+      templateRow = row;
+      break;
+    }
+  }
+
+  if (!templateRow || !templateRow.parentNode) return;
+
+  const parentTable = templateRow.parentNode;
+
+  const stepResults = job.stepResults || [];
+  const templateSteps = job.template_snapshot?.steps || [];
+
+  for (let idx = 0; idx < stepResults.length; idx++) {
+    const sr = stepResults[idx];
+    const stepDef = templateSteps.find((s: any) => s.stepId === sr.stepId);
+    const stepTitle = stepDef ? stepDef.title : `Bước ${sr.stepId}`;
+    const sampleSize = sr.sampleSize || stepDef?.sampleSize || job.template_snapshot?.orderQty || '120 pcs';
+    
+    let resultText = 'Pending';
+    if (sr.status === 'PASS') {
+      resultText = `${sr.sampleSize || stepDef?.sampleSize || job.template_snapshot?.orderQty || '117 pcs'} Pass`;
+    } else if (sr.status === 'FAIL') {
+      resultText = 'Defective';
+    }
+
+    let commentText = sr.note || 'Không có ghi chú';
+    if (sr.textValue) {
+      commentText += `\nDữ liệu nhập: ${sr.textValue}`;
+    }
+    if (sr.aiDetectedValue) {
+      commentText += `\nVero: ${sr.aiDetectedValue}`;
+    }
+    if (sr.adminReviewNote) {
+      commentText += `\nGhi chú Admin: ${sr.adminReviewNote}`;
+    }
+
+    const newRow = templateRow.cloneNode(true) as Element;
+
+    replaceTextInElement(newRow, {
+      '{{step_idx}}': String(idx + 1),
+      '{{step_title}}': stepTitle,
+      '{{step_sample}}': sampleSize,
+      '{{step_result}}': resultText,
+      '{{step_comment}}': commentText,
+    });
+
+    const stepPhotos = photos.filter(p => p.step_id === sr.stepId)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    
+    const latestBySlot = new Map<number, CustomerReportPhoto>();
+    stepPhotos.forEach((photo) => latestBySlot.set(Number(photo.slot_index), photo));
+    const onePhotoPerSlot = [...latestBySlot.entries()].sort((a, b) => a[0] - b[0]).map(([, photo]) => photo);
+
+    const drawings = newRow.getElementsByTagNameNS(WORD_NS, 'drawing');
+    let imageCell: Element | null = null;
+    let templateP: Element | null = null;
+
+    if (drawings.length > 0) {
+      const drawing = drawings.item(0);
+      let parent: Node | null = drawing?.parentNode;
+      while (parent && parent.nodeName !== 'w:p') {
+        parent = parent.parentNode;
+      }
+      if (parent) {
+        templateP = parent as Element;
+        imageCell = templateP.parentNode as Element;
+      }
+    }
+
+    if (imageCell && templateP) {
+      if (onePhotoPerSlot.length === 0) {
+        const noPhotoP = documentDom.createElement('w:p');
+        const noPhotoR = documentDom.createElement('w:r');
+        const noPhotoT = documentDom.createElement('w:t');
+        noPhotoT.textContent = 'Chưa thu thập ảnh';
+        noPhotoR.appendChild(noPhotoT);
+        noPhotoP.appendChild(noPhotoR);
+        imageCell.insertBefore(noPhotoP, templateP);
+      } else {
+        for (let pIdx = 0; pIdx < onePhotoPerSlot.length; pIdx++) {
+          const photo = onePhotoPerSlot[pIdx];
+          const photoP = templateP.cloneNode(true) as Element;
+
+          const slotLabel = photo.slot_index ? `Slot ${photo.slot_index}` : `Ảnh ${pIdx + 1}`;
+          replaceTextInElement(photoP, { '{{slot_label}}': slotLabel });
+
+          const nextRId = getNextRelationshipId(relsDom);
+          const mediaFileName = `uploaded_step_${sr.stepId}_${pIdx}_${Date.now()}.png`;
+          const mediaPath = `word/media/${mediaFileName}`;
+
+          try {
+            const source = await readFile(join(uploadsDirectory, basename(photo.storage_path)));
+            const aspect = X530_SLOT_ASPECT_RATIOS[sr.stepId]?.[pIdx] || 0.75;
+            let pipeline = sharp(source).rotate();
+            if (aspect && Number.isFinite(aspect) && aspect > 0) {
+              const { width, height } = reportAspectDimensions(aspect, 1400);
+              pipeline = pipeline.resize({ width, height, fit: 'cover', position: 'centre' });
+            }
+            const png = await pipeline.png({ compressionLevel: 9 }).toBuffer();
+            zip.file(mediaPath, png);
+
+            const relationshipsEl = relsDom.getElementsByTagName('Relationships').item(0);
+            if (relationshipsEl) {
+              const newRel = relsDom.createElement('Relationship');
+              newRel.setAttribute('Id', nextRId);
+              newRel.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image');
+              newRel.setAttribute('Target', `media/${mediaFileName}`);
+              relationshipsEl.appendChild(newRel);
+            }
+
+            const blips = photoP.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip');
+            for (let b = 0; b < blips.length; b++) {
+              const blip = blips.item(b);
+              if (blip) {
+                blip.setAttribute('r:embed', nextRId);
+                blip.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'r:embed', nextRId);
+              }
+            }
+
+            imageCell.insertBefore(photoP, templateP);
+          } catch (err) {
+            console.warn(`Could not process photo for step ${sr.stepId} slot ${photo.slot_index}:`, err);
+            const errorP = documentDom.createElement('w:p');
+            const errorR = documentDom.createElement('w:r');
+            const errorT = documentDom.createElement('w:t');
+            errorT.textContent = `[Lỗi chèn ảnh: ${slotLabel}]`;
+            errorR.appendChild(errorT);
+            errorP.appendChild(errorR);
+            imageCell.insertBefore(errorP, templateP);
+          }
+        }
+      }
+      imageCell.removeChild(templateP);
+    }
+
+    parentTable.insertBefore(newRow, templateRow);
+  }
+
+  parentTable.removeChild(templateRow);
+}
+
 export async function buildX530CustomerReport(options: {
   templateDirectory: string;
   uploadsDirectory: string;
@@ -188,51 +433,112 @@ export async function buildX530CustomerReport(options: {
   const templateBuffer = await readFile(join(options.templateDirectory, templateName));
   const zip = new PizZip(templateBuffer);
   const dates = reportDate(options.job.created_at);
-  const replacements = {
-    '2026-07-22': dates.dashed,
-    '2026/07/22': dates.slashed,
-    '100-70-260722': options.job.external_id,
-    SNM000031: options.job.batch_number,
-    'Thùy': options.job.worker_name?.trim() || 'Chưa cập nhật',
-  };
 
-  for (const xmlPath of ['word/document.xml', 'word/header1.xml']) {
-    const xmlFile = zip.file(xmlPath);
-    if (xmlFile) zip.file(xmlPath, replaceTextAcrossRuns(xmlFile.asText(), replacements));
-  }
+  const docXmlFile = zip.file('word/document.xml');
+  if (!docXmlFile) throw new Error('Invalid DOCX: word/document.xml not found.');
 
-  const blankEvidenceImage = await sharp({
-    create: { width: 8, height: 8, channels: 4, background: '#ffffff00' },
-  }).png({ compressionLevel: 9 }).toBuffer();
-  X530_ALL_EVIDENCE_TARGETS.forEach((target) => {
-    if (zip.file(target)) zip.file(target, blankEvidenceImage);
-  });
+  const docXmlText = docXmlFile.asText();
+  const isDynamicTemplate = docXmlText.includes('{{step_title}}') || docXmlText.includes('{{defect_desc}}');
 
-  const photosByStep = new Map<string, CustomerReportPhoto[]>();
-  options.photos.forEach((photo) => {
-    const current = photosByStep.get(photo.step_id) || [];
-    current.push(photo);
-    photosByStep.set(photo.step_id, current);
-  });
+  if (isDynamicTemplate) {
+    const documentDom = new DOMParser().parseFromString(docXmlText, 'application/xml');
 
-  for (const [stepId, targets] of Object.entries(X530_STEP_IMAGE_TARGETS)) {
-    const photos = (photosByStep.get(stepId) || []).sort((left, right) =>
-      new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
-    );
-    const latestBySlot = new Map<number, CustomerReportPhoto>();
-    photos.forEach((photo) => latestBySlot.set(Number(photo.slot_index), photo));
-    const onePhotoPerSlot = [...latestBySlot.entries()].sort((left, right) => left[0] - right[0]).map(([, photo]) => photo);
-    for (let index = 0; index < Math.min(onePhotoPerSlot.length, targets.length); index += 1) {
-      const photo = onePhotoPerSlot[index];
-      const source = await readFile(join(options.uploadsDirectory, basename(photo.storage_path)));
-      const aspect = X530_SLOT_ASPECT_RATIOS[stepId]?.[index];
-      let pipeline = sharp(source).rotate();
-      if (aspect && Number.isFinite(aspect) && aspect > 0) {
-        const { width, height } = reportAspectDimensions(aspect, 1400);
-        pipeline = pipeline.resize({ width, height, fit: 'cover', position: 'centre' });
+    const baseReplacements: Record<string, string> = {
+      '{{job_id}}': options.job.external_id,
+      '{{batch_number}}': options.job.batch_number,
+      '{{worker_name}}': options.job.worker_name?.trim() || 'Chưa cập nhật',
+      '{{inspection_date}}': dates.dashed,
+      '{{inspection_date_slash}}': dates.slashed,
+      '2026-07-22': dates.dashed,
+      '2026/07/22': dates.slashed,
+      '100-70-260722': options.job.external_id,
+      SNM000031: options.job.batch_number,
+      'Thùy': options.job.worker_name?.trim() || 'Chưa cập nhật',
+    };
+    replaceTextInElement(documentDom, baseReplacements);
+
+    const headerFile = zip.file('word/header1.xml');
+    if (headerFile) {
+      const headerDom = new DOMParser().parseFromString(headerFile.asText(), 'application/xml');
+      replaceTextInElement(headerDom, baseReplacements);
+      zip.file('word/header1.xml', new XMLSerializer().serializeToString(headerDom));
+    }
+
+    const defects = options.job.defectsFindingData || [];
+    populateDefectsTable(documentDom, defects);
+
+    const pkg = options.job.packagingInfoData || {};
+    const pkgReplacements: Record<string, string> = {
+      '{{carton_spec}}': options.job.template_snapshot?.cartonSpec || pkg.cartonSpec || '310x195x125mm',
+      '{{carton_size}}': pkg.cartonMeasuredSize || '',
+      '{{carton_nw}}': pkg.cartonNw || '',
+      '{{carton_gw}}': pkg.cartonGw || '',
+      '{{carton_result}}': pkg.cartonResult || '',
+      '{{device_spec}}': options.job.template_snapshot?.deviceSpec || pkg.deviceSpec || '164.22×66.59×21.91',
+      '{{device_size}}': pkg.deviceMeasuredSize || '',
+      '{{device_nw}}': pkg.deviceNw || '',
+      '{{device_gw}}': pkg.deviceGw || '',
+      '{{device_result}}': pkg.deviceResult || '',
+      '{{barcode_data}}': pkg.barcodeData || '',
+      '{{barcode_result}}': pkg.barcodeResult || '',
+    };
+    replaceTextInElement(documentDom, pkgReplacements);
+
+    const relsFile = zip.file('word/_rels/document.xml.rels');
+    if (!relsFile) throw new Error('Invalid DOCX: word/_rels/document.xml.rels not found.');
+    const relsDom = new DOMParser().parseFromString(relsFile.asText(), 'application/xml');
+
+    await populateStepsTable(documentDom, relsDom, zip, options.job, options.photos, options.uploadsDirectory);
+
+    zip.file('word/_rels/document.xml.rels', new XMLSerializer().serializeToString(relsDom));
+    zip.file('word/document.xml', new XMLSerializer().serializeToString(documentDom));
+  } else {
+    const replacements = {
+      '2026-07-22': dates.dashed,
+      '2026/07/22': dates.slashed,
+      '100-70-260722': options.job.external_id,
+      SNM000031: options.job.batch_number,
+      'Thùy': options.job.worker_name?.trim() || 'Chưa cập nhật',
+    };
+
+    for (const xmlPath of ['word/document.xml', 'word/header1.xml']) {
+      const xmlFile = zip.file(xmlPath);
+      if (xmlFile) zip.file(xmlPath, replaceTextAcrossRuns(xmlFile.asText(), replacements));
+    }
+
+    const blankEvidenceImage = await sharp({
+      create: { width: 8, height: 8, channels: 4, background: '#ffffff00' },
+    }).png({ compressionLevel: 9 }).toBuffer();
+    X530_ALL_EVIDENCE_TARGETS.forEach((target) => {
+      if (zip.file(target)) zip.file(target, blankEvidenceImage);
+    });
+
+    const photosByStep = new Map<string, CustomerReportPhoto[]>();
+    options.photos.forEach((photo) => {
+      const current = photosByStep.get(photo.step_id) || [];
+      current.push(photo);
+      photosByStep.set(photo.step_id, current);
+    });
+
+    for (const [stepId, targets] of Object.entries(X530_STEP_IMAGE_TARGETS)) {
+      const photos = (photosByStep.get(stepId) || []).sort((left, right) =>
+        new Date(left.created_at).getTime() - new Date(right.created_at).getTime(),
+      );
+      const latestBySlot = new Map<number, CustomerReportPhoto>();
+      photos.forEach((photo) => latestBySlot.set(Number(photo.slot_index), photo));
+      const onePhotoPerSlot = [...latestBySlot.entries()].sort((left, right) => left[0] - right[0]).map(([, photo]) => photo);
+      for (let index = 0; index < Math.min(onePhotoPerSlot.length, targets.length); index += 1) {
+        const photo = onePhotoPerSlot[index];
+        const source = await readFile(join(options.uploadsDirectory, basename(photo.storage_path)));
+        const aspect = X530_SLOT_ASPECT_RATIOS[stepId]?.[index];
+        let pipeline = sharp(source).rotate();
+        if (aspect && Number.isFinite(aspect) && aspect > 0) {
+          const { width, height } = reportAspectDimensions(aspect, 1400);
+          pipeline = pipeline.resize({ width, height, fit: 'cover', position: 'centre' });
+        }
+        const png = await pipeline.png({ compressionLevel: 9 }).toBuffer();
+        zip.file(targets[index], png);
       }
-      const png = await pipeline.png({ compressionLevel: 9 }).toBuffer();
-      zip.file(targets[index], png);
     }
   }
 

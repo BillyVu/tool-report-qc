@@ -122,3 +122,149 @@ test('preserves the customer package while replacing metadata and evidence media
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('dynamically populates defects, packaging, and step rows with unique images', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'qc-dynamic-customer-docx-'));
+  const templateDirectory = join(root, 'templates');
+  const uploadsDirectory = join(root, 'uploads');
+  await mkdir(templateDirectory);
+  await mkdir(uploadsDirectory);
+
+  try {
+    const photoData = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: '#ff0000' },
+    }).png().toBuffer();
+    await writeFile(join(uploadsDirectory, 'evidence_dynamic.png'), photoData);
+
+    const docXml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="${WORD_NS}"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <w:body>
+    <!-- Header/Job Info -->
+    <w:p><w:r><w:t>{{job_id}}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Worker: {{worker_name}}</w:t></w:r></w:p>
+
+    <!-- Defects Table -->
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>{{defect_desc}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{defect_photo}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{defect_crit}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{defect_maj}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{defect_min}}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+
+    <!-- Packaging Info -->
+    <w:p><w:r><w:t>Carton Spec: {{carton_spec}}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Carton Measured: {{carton_size}}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Barcode Data: {{barcode_data}}</w:t></w:r></w:p>
+
+    <!-- Steps Table -->
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>{{step_idx}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{step_title}}</w:t></w:r></w:p></w:tc>
+        <w:tc>
+          <w:p>
+            <w:r><w:t>{{slot_label}}</w:t></w:r>
+            <w:drawing>
+              <w:inline>
+                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:blipFill>
+                    <a:blip r:embed="rIdDefault"/>
+                  </pic:blipFill>
+                </pic:pic>
+              </w:inline>
+            </w:drawing>
+          </w:p>
+        </w:tc>
+        <w:tc><w:p><w:r><w:t>{{step_result}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{step_comment}}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>`;
+
+    const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdDefault" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image_default.png"/>
+</Relationships>`;
+
+    const zip = new PizZip();
+    zip.file('word/document.xml', docXml);
+    zip.file('word/_rels/document.xml.rels', relsXml);
+    zip.file('word/media/image_default.png', photoData);
+
+    await writeFile(join(templateDirectory, TEMPLATE_NAME), zip.generate({ type: 'nodebuffer' }));
+
+    const report = await buildX530CustomerReport({
+      templateDirectory,
+      uploadsDirectory,
+      job: {
+        external_id: 'JOB-DYNAMIC-001',
+        batch_number: 'BATCH-DYN',
+        worker_name: 'Worker Dynamic',
+        created_at: '2026-08-04T00:00:00+07:00',
+        template_snapshot: {
+          docxTemplateName: TEMPLATE_NAME,
+          cartonSpec: '400x300x200mm',
+          steps: [
+            { stepId: 'STEP_1', title: 'Kiểm tra bề mặt' }
+          ]
+        },
+        defectsFindingData: [
+          { description: 'Trầy xước bề mặt', defectType: 'Major', count: 3, photos: ['evidence_dynamic.png'] }
+        ],
+        packagingInfoData: {
+          cartonMeasuredSize: '398x299x199mm',
+          barcodeData: 'BARCODE-XYZ-123'
+        },
+        stepResults: [
+          { stepId: 'STEP_1', status: 'PASS', note: 'Đạt yêu cầu', sampleSize: '120 pcs' }
+        ]
+      },
+      photos: [{
+        step_id: 'STEP_1',
+        slot_index: 1,
+        storage_path: 'evidence_dynamic.png',
+        created_at: '2026-08-04T00:01:00+07:00'
+      }]
+    });
+
+    const output = new PizZip(report);
+    const documentXml = output.file('word/document.xml')?.asText() || '';
+    const relsXmlOutput = output.file('word/_rels/document.xml.rels')?.asText() || '';
+
+    // Check basic info replacements
+    assert.match(documentXml, /JOB-DYNAMIC-001/);
+    assert.match(documentXml, /Worker Dynamic/);
+
+    // Check defects table rendering
+    assert.match(documentXml, /Trầy xước bề mặt/);
+    assert.match(documentXml, /\[Photo Attached\]/);
+    assert.match(documentXml, /<w:t>3<\/w:t>/); // Major count
+
+    // Check packaging info replacements
+    assert.match(documentXml, /Carton Spec: 400x300x200mm/);
+    assert.match(documentXml, /Carton Measured: 398x299x199mm/);
+    assert.match(documentXml, /Barcode Data: BARCODE-XYZ-123/);
+
+    // Check steps table rendering
+    assert.match(documentXml, /Kiểm tra bề mặt/);
+    assert.match(documentXml, /120 pcs Pass/);
+    assert.match(documentXml, /Đạt yêu cầu/);
+
+    // Check relationship files contain the newly registered image relationship
+    assert.match(relsXmlOutput, /Target="media\/uploaded_step_STEP_1_0_/);
+    
+    // Find the newly registered rId and check if it is embedded in the blip tag of the document
+    const relIdMatch = relsXmlOutput.match(/Id="(rId\d+)"[^>]+Target="media\/uploaded_step_STEP_1_0_/);
+    assert.ok(relIdMatch, 'Relationship ID for new step photo is registered');
+    const newRelId = relIdMatch[1];
+    assert.match(documentXml, new RegExp(`r:embed="${newRelId}"`));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

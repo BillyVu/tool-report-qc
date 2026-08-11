@@ -676,6 +676,7 @@ app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
 app.get('/api/admin/jobs/:jobId/customer-report.docx', requireAdmin, async (req, res) => {
   const result = await db.query(
     `SELECT j.id, j.external_id, j.batch_number, j.worker_name, j.created_at, j.template_snapshot,
+            j.defects_finding_data, j.packaging_info_data, j.other_info_data, j.step_results,
             COALESCE(
               jsonb_agg(
                 jsonb_build_object(
@@ -695,17 +696,29 @@ app.get('/api/admin/jobs/:jobId/customer-report.docx', requireAdmin, async (req,
   );
   if (!result.rowCount) return res.status(404).json({ error: 'Job not found.' });
 
-  const job = result.rows[0];
-  if (!isCustomerDocxTemplate(job.template_snapshot?.docxTemplateName)) {
+  const dbJob = result.rows[0];
+  if (!isCustomerDocxTemplate(dbJob.template_snapshot?.docxTemplateName)) {
     return res.status(409).json({ error: 'Lệnh QC này không sử dụng mẫu DOCX khách hàng được hỗ trợ.' });
   }
+
+  const job = {
+    external_id: dbJob.external_id,
+    batch_number: dbJob.batch_number,
+    worker_name: dbJob.worker_name,
+    created_at: dbJob.created_at,
+    template_snapshot: dbJob.template_snapshot,
+    defectsFindingData: dbJob.defects_finding_data || dbJob.template_snapshot?.defectsFindingData || [],
+    packagingInfoData: dbJob.packaging_info_data || dbJob.template_snapshot?.packagingInfoData || {},
+    otherInfoData: dbJob.other_info_data || dbJob.template_snapshot?.otherInfoData || {},
+    stepResults: dbJob.step_results || [],
+  };
 
   try {
     const report = await buildX530CustomerReport({
       templateDirectory: docxTemplatesDirectory,
       uploadsDirectory,
       job,
-      photos: job.evidence_photos,
+      photos: dbJob.evidence_photos,
     });
     const filename = `[ATT_X530_Inspection_Report]_${job.external_id}.docx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
