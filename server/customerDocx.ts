@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
+import { DOMParser, XMLSerializer, Document, Element, Node } from '@xmldom/xmldom';
 import PizZip from 'pizzip';
 import sharp from 'sharp';
 
@@ -87,6 +87,7 @@ interface CustomerReportJob {
     steps?: any[];
     cartonSpec?: string;
     deviceSpec?: string;
+    productCode?: string;
   };
   defectsFindingData?: any[];
   packagingInfoData?: any;
