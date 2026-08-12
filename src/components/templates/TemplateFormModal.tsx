@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Plus, Check, X, FileText, Upload, Sparkles, AlertCircle, Eye, CircleHelp, Trash2 } from 'lucide-react';
+import { Plus, Check, X, FileText, Upload, Sparkles, AlertCircle, Eye, EyeOff, CircleHelp, Trash2 } from 'lucide-react';
 import { ChecklistTemplate, InspectionStep, DocxMapping, DefectItem, PackagingInfoData, OtherInfoData } from '../../types/qc';
 import { StepDraggableList } from './StepDraggableList';
 import { DocxMappingModal } from './DocxMappingModal';
@@ -103,6 +103,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   // Modal State
   const [activeMappingStepIndex, setActiveMappingStepIndex] = useState<number | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [showLivePreview, setShowLivePreview] = useState(false);
   const startBuilderTourRef = useRef<(() => void) | null>(null);
 
   const handleBuilderTourReady = useCallback((startTour: () => void) => {
@@ -330,6 +331,19 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
             <div className="flex shrink-0 items-center gap-1">
               <button
                 type="button"
+                onClick={() => setShowLivePreview((prev) => !prev)}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[11px] font-bold transition-colors ${
+                  showLivePreview
+                    ? 'border-sky-700 bg-sky-950 text-sky-300 hover:bg-sky-900 hover:text-white'
+                    : 'border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}
+                title={showLivePreview ? 'Ẩn WORKER LIVE PREVIEW' : 'Hiện WORKER LIVE PREVIEW'}
+              >
+                {showLivePreview ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{showLivePreview ? 'Ẩn Preview' : 'Preview'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => startBuilderTourRef.current?.()}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1.5 text-[11px] font-bold text-sky-300 transition-colors hover:bg-slate-800 hover:text-white"
               >
@@ -369,8 +383,8 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
           </div>
 
           {/* Form Content */}
-          <form onSubmit={handleFormSubmit} className="relative flex-1 overflow-y-auto p-4 space-y-6 bg-[#090d16] sm:p-6 lg:pr-[420px]">
-            <aside className="hidden lg:block absolute right-6 top-6 w-[360px] rounded-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl">
+          <form onSubmit={handleFormSubmit} className={`relative flex-1 overflow-y-auto p-4 space-y-6 bg-[#090d16] sm:p-6 ${showLivePreview ? 'lg:pr-[420px]' : ''}`}>
+            <aside className={`absolute right-6 top-6 w-[360px] rounded-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl ${showLivePreview ? 'hidden lg:block' : 'hidden'}`}>
               <div className="mb-3 flex items-center justify-between border-b border-slate-800 pb-3">
                 <div><p className="text-[10px] font-bold tracking-wider text-sky-400">WORKER LIVE PREVIEW</p><p className="text-sm font-bold text-white">{title || 'Mẫu QC chưa đặt tên'}</p></div>
                 <span className="rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-300">Desktop</span>

@@ -228,36 +228,15 @@ function reportAspectDimensions(aspect: number, maxSide: number = 1400): { width
 
 async function processImageWithCoverFit(source: Buffer, targetAspect: number): Promise<Buffer> {
   try {
-    const rotated = await sharp(source).rotate().toBuffer();
-    const meta = await sharp(rotated).metadata();
-    const srcW = meta.width || 1000;
-    const srcH = meta.height || 1000;
-    const srcAspect = srcW / srcH;
-
-    let cropW = srcW;
-    let cropH = srcH;
-
-    if (srcAspect > targetAspect) {
-      cropW = Math.round(srcH * targetAspect);
-    } else {
-      cropH = Math.round(srcW / targetAspect);
-    }
-
-    const left = Math.max(0, Math.floor((srcW - cropW) / 2));
-    const top = Math.max(0, Math.floor((srcH - cropH) / 2));
-    const width = Math.min(srcW - left, cropW);
-    const height = Math.min(srcH - top, cropH);
-
     const { width: outW, height: outH } = reportAspectDimensions(targetAspect, 1400);
-
-    return await sharp(rotated)
-      .extract({ left, top, width, height })
-      .resize(outW, outH, { fit: 'fill' })
-      .png({ compressionLevel: 9 })
+    return await sharp(source)
+      .rotate()
+      .resize(outW, outH, { fit: 'cover', position: 'centre' })
+      .png({ compressionLevel: 6 })
       .toBuffer();
   } catch (err) {
     console.warn('Could not process cover fit image:', err);
-    return sharp(source).rotate().png({ compressionLevel: 9 }).toBuffer();
+    return sharp(source).rotate().png({ compressionLevel: 6 }).toBuffer();
   }
 }
 
@@ -650,7 +629,7 @@ async function populateStepsTable(
             const source = await readFile(join(uploadsDirectory, basename(photo.storage_path)));
             const aspect = getSlotAspectRatio(sr.stepId, idx, pIdx);
             const png = await processImageWithCoverFit(source, aspect);
-            zip.file(mediaPath, png);
+            zip.file(mediaPath, png, { compression: 'STORE' });
 
             const relationshipsEl = relsDom.getElementsByTagName('Relationships').item(0);
             if (relationshipsEl) {
@@ -806,9 +785,9 @@ export async function buildX530CustomerReport(options: {
 
     const blankEvidenceImage = await sharp({
       create: { width: 8, height: 8, channels: 4, background: '#ffffff00' },
-    }).png({ compressionLevel: 9 }).toBuffer();
+    }).png({ compressionLevel: 6 }).toBuffer();
     X530_ALL_EVIDENCE_TARGETS.forEach((target) => {
-      if (zip.file(target)) zip.file(target, blankEvidenceImage);
+      if (zip.file(target)) zip.file(target, blankEvidenceImage, { compression: 'STORE' });
     });
 
     for (const [stepKey, targets] of Object.entries(X530_STEP_IMAGE_TARGETS)) {
@@ -828,7 +807,7 @@ export async function buildX530CustomerReport(options: {
         const source = await readFile(join(options.uploadsDirectory, basename(photo.storage_path)));
         const aspect = getSlotAspectRatio(stepIdToMatch, stepIndex, index);
         const png = await processImageWithCoverFit(source, aspect);
-        zip.file(targets[index], png);
+        zip.file(targets[index], png, { compression: 'STORE' });
       }
     }
   }

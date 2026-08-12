@@ -268,3 +268,105 @@ test('dynamically populates defects, packaging, and step rows with unique images
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('maps step mapping tags (note/status/image) into the dynamic step rows', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'qc-mapping-customer-docx-'));
+  const templateDirectory = join(root, 'templates');
+  const uploadsDirectory = join(root, 'uploads');
+  await mkdir(templateDirectory);
+  await mkdir(uploadsDirectory);
+
+  try {
+    const photoData = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: '#00ff00' },
+    }).png().toBuffer();
+    await writeFile(join(uploadsDirectory, 'evidence_mapping.png'), photoData);
+
+    const docXml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="${WORD_NS}"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Job: {{job_id}}</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>{{step_idx}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{step_title}}</w:t></w:r></w:p></w:tc>
+        <w:tc>
+          <w:p>
+            <w:r><w:t>{{photo_visual}}</w:t></w:r>
+            <w:drawing>
+              <w:inline>
+                <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:blipFill><a:blip r:embed="rIdDefault"/></pic:blipFill>
+                </pic:pic>
+              </w:inline>
+            </w:drawing>
+          </w:p>
+        </w:tc>
+        <w:tc><w:p><w:r><w:t>{{status_visual}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>{{note_visual}}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>`;
+
+    const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdDefault" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image_default.png"/>
+</Relationships>`;
+
+    const zip = new PizZip();
+    zip.file('word/document.xml', docXml);
+    zip.file('word/_rels/document.xml.rels', relsXml);
+    zip.file('word/media/image_default.png', photoData);
+    await writeFile(join(templateDirectory, TEMPLATE_NAME), zip.generate({ type: 'nodebuffer' }));
+
+    const report = await buildX530CustomerReport({
+      templateDirectory,
+      uploadsDirectory,
+      job: {
+        external_id: 'JOB-MAP-001',
+        batch_number: 'BATCH-MAP',
+        worker_name: 'Worker Map',
+        created_at: '2026-08-04T00:00:00+07:00',
+        template_snapshot: {
+          docxTemplateName: TEMPLATE_NAME,
+          steps: [
+            {
+              stepId: 'STEP_1',
+              title: 'Kiểm tra bề mặt',
+              mapping: {
+                imageTag: '{{photo_visual}}',
+                noteTag: '{{note_visual}}',
+                statusTag: '{{status_visual}}',
+                imageWidthMm: 60,
+                imageHeightMm: 45,
+              },
+            },
+          ],
+        },
+        stepResults: [
+          { stepId: 'STEP_1', status: 'PASS', note: 'Bề mặt đạt', sampleSize: '120 pcs' },
+        ],
+      },
+      photos: [{
+        step_id: 'STEP_1',
+        slot_index: 1,
+        storage_path: 'evidence_mapping.png',
+        created_at: '2026-08-04T00:01:00+07:00',
+      }],
+    });
+
+    const output = new PizZip(report);
+    const documentXml = output.file('word/document.xml')?.asText() || '';
+
+    assert.match(documentXml, /Kiểm tra bề mặt/, 'step title from the template definition is written');
+    assert.match(documentXml, /Bề mặt đạt/, 'note mapping tag is replaced with the worker note');
+    assert.match(documentXml, /120 pcs Pass/, 'status mapping tag is replaced with the step result');
+    assert.match(documentXml, /\[Photo Attached\]/, 'image mapping tag is replaced with the photo placeholder');
+    assert.doesNotMatch(documentXml, /\{\{(note|status|photo)_visual\}\}/, 'raw mapping placeholders are removed');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
