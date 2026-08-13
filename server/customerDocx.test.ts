@@ -160,13 +160,21 @@ test('dynamically populates defects, packaging, and step rows with unique images
     <w:p><w:r><w:t>Carton Spec: {{carton_spec}}</w:t></w:r></w:p>
     <w:p><w:r><w:t>Carton Measured: {{carton_size}}</w:t></w:r></w:p>
     <w:p><w:r><w:t>Barcode Data: {{barcode_data}}</w:t></w:r></w:p>
-    <w:p><w:r><w:t>Carton Photos: {{carton_photos}}</w:t></w:r></w:p>
-    <w:p><w:r><w:t>Device Photos: {{device_photos}}</w:t></w:r></w:p>
-    <w:p><w:r><w:t>Barcode Photos: {{barcode_photos}}</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Carton Photos: {{carton_photos}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Device Photos: {{device_photos}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Barcode Photos: {{barcode_photos}}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
 
     <!-- Other Info -->
-    <w:p><w:r><w:t>Other Notes: {{other_notes}}</w:t></w:r></w:p>
-    <w:p><w:r><w:t>Other Photos: {{other_photos}}</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Other Notes: {{other_notes}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Other Photos: {{other_photos}}</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
 
     <!-- Steps Table -->
     <w:tbl>
@@ -273,11 +281,11 @@ test('dynamically populates defects, packaging, and step rows with unique images
     assert.match(documentXml, /Đạt yêu cầu/);
 
     // Check relationship files contain the newly registered image relationship
-    assert.match(relsXmlOutput, /Target="media\/uploaded_step_STEP_1_0_/);
-    assert.match(relsXmlOutput, /Target="media\/dyn_inserted_/);
+    assert.match(relsXmlOutput, /Target="media\/defect_1_/);
+    assert.match(relsXmlOutput, /Target="media\/carton_1_/);
     
     // Find the newly registered rId and check if it is embedded in the blip tag of the document
-    const relIdMatch = relsXmlOutput.match(/Id="(rId\d+)"[^>]+Target="media\/uploaded_step_STEP_1_0_/);
+    const relIdMatch = relsXmlOutput.match(/Id="(rId\d+)"[^>]+Target="media\/uploaded_step_STEP_1_slot_1_/);
     assert.ok(relIdMatch, 'Relationship ID for new step photo is registered');
     const newRelId = relIdMatch[1];
     assert.match(documentXml, new RegExp(`r:embed="${newRelId}"`));
@@ -381,7 +389,7 @@ test('maps step mapping tags (note/status/image) into the dynamic step rows', as
     assert.match(documentXml, /Kiểm tra bề mặt/, 'step title from the template definition is written');
     assert.match(documentXml, /Bề mặt đạt/, 'note mapping tag is replaced with the worker note');
     assert.match(documentXml, /120 pcs Pass/, 'status mapping tag is replaced with the step result');
-    assert.match(documentXml, /\[Photo Attached\]/, 'image mapping tag is replaced with the photo placeholder');
+    assert.match(documentXml, /<w:drawing>/, 'image drawing is rendered');
     assert.doesNotMatch(documentXml, /\{\{(note|status|photo)_visual\}\}/, 'raw mapping placeholders are removed');
   } finally {
     await rm(root, { recursive: true, force: true });

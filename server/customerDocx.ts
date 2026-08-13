@@ -3,6 +3,9 @@ import { basename, join } from 'node:path';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import PizZip from 'pizzip';
 import sharp from 'sharp';
+import { buildCustomerReportSteps, type ReportPhoto, type ReportStep } from './customerReportModel.js';
+import { OoxmlImageWriter } from './ooxmlImage.js';
+import { normalizeReportImage, type ReportImageBox } from './reportImage.js';
 
 const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
@@ -86,12 +89,6 @@ export function applyX530SlotAspectRatios(template: unknown): unknown {
       return step;
     }),
   };
-}
-
-function reportAspectDimensions(aspect: number, maxSide: number = 1400): { width: number; height: number } {
-  return aspect >= 1
-    ? { width: maxSide, height: Math.round(maxSide / aspect) }
-    : { width: Math.round(maxSide * aspect), height: maxSide };
 }
 
 interface CustomerReportJob {
@@ -203,20 +200,6 @@ export function isCustomerDocxTemplate(templateName?: string | null) {
   return basename(templateName || '') === X530_TEMPLATE_NAME;
 }
 
-function getNextRelationshipId(relsDom: any): string {
-  const relationships = relsDom.getElementsByTagName('Relationship');
-  let maxId = 0;
-  for (let i = 0; i < relationships.length; i++) {
-    const id = relationships.item(i)?.getAttribute('Id') || '';
-    const match = id.match(/^rId(\d+)$/);
-    if (match) {
-      const num = parseInt(match[1], 10);
-      if (num > maxId) maxId = num;
-    }
-  }
-  return `rId${maxId + 1}`;
-}
-
 function getPhotosForStep(photos: CustomerReportPhoto[], stepId: string, stepIndex: number): CustomerReportPhoto[] {
   const normalizedStepId = (stepId || '').toLowerCase().replace(/[-_]/g, '');
   const stepKeyIndex = `step${stepIndex + 1}`;
@@ -242,16 +225,15 @@ function getSlotAspectRatio(stepId: string, stepIndex: number, slotIndex: number
   return 0.75;
 }
 
-async function processImageWithCoverFit(source: Buffer, targetAspect: number): Promise<Buffer> {
+async function processImageWithContainFit(source: Buffer, targetAspect: number): Promise<Buffer> {
   try {
-    const { width: outW, height: outH } = reportAspectDimensions(targetAspect, 1400);
-    return await sharp(source)
-      .rotate()
-      .resize(outW, outH, { fit: 'cover', position: 'centre' })
-      .png({ compressionLevel: 6 })
-      .toBuffer();
+    const normalized = await normalizeReportImage(source, {
+      widthMm: Math.max(targetAspect, 0.01) * 50,
+      heightMm: 50,
+    });
+    return normalized.buffer;
   } catch (err) {
-    console.warn('Could not process cover fit image:', err);
+    console.warn('Could not normalize report image:', err);
     return sharp(source).rotate().png({ compressionLevel: 6 }).toBuffer();
   }
 }
@@ -302,13 +284,12 @@ function getUrlFromPhoto(photo: any): string {
 
 async function insertImageToCell(
   documentDom: any,
-  relsDom: any,
-  zip: PizZip,
+  imageWriter: OoxmlImageWriter,
   cell: any,
   photo: any,
   uploadsDirectory: string,
-  templateDrawing: any,
-  aspect: number = 0.75
+  box: ReportImageBox,
+  mediaName: string,
 ): Promise<void> {
   const photoUrl = getUrlFromPhoto(photo);
   if (!photoUrl) return;
@@ -318,41 +299,22 @@ async function insertImageToCell(
 
   try {
     const source = await readFile(filePath);
-    const nextRId = getNextRelationshipId(relsDom);
-    const mediaFileName = `dyn_inserted_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.png`;
-    const mediaPath = `word/media/${mediaFileName}`;
+    const { drawing } = await imageWriter.createDrawing({
+      source,
+      mediaName,
+      altText: fileName,
+      box,
+    });
 
-    const png = await processImageWithCoverFit(source, aspect);
-    zip.file(mediaPath, png, { compression: 'STORE' });
-
-    const relationshipsEl = relsDom.getElementsByTagName('Relationships').item(0);
-    if (relationshipsEl) {
-      const newRel = relsDom.createElement('Relationship');
-      newRel.setAttribute('Id', nextRId);
-      newRel.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image');
-      newRel.setAttribute('Target', `media/${mediaFileName}`);
-      relationshipsEl.appendChild(newRel);
-    }
-
-    const newDrawing = templateDrawing.cloneNode(true);
-    const blips = newDrawing.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip');
-    for (let b = 0; b < blips.length; b++) {
-      const blip = blips.item(b);
-      if (blip) {
-        blip.setAttribute('r:embed', nextRId);
-        blip.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'r:embed', nextRId);
-      }
-    }
-
-    const newP = documentDom.createElement('w:p');
-    const pPr = documentDom.createElement('w:pPr');
-    const jc = documentDom.createElement('w:jc');
-    jc.setAttribute('w:val', 'center');
+    const newP = documentDom.createElementNS(WORD_NS, 'w:p');
+    const pPr = documentDom.createElementNS(WORD_NS, 'w:pPr');
+    const jc = documentDom.createElementNS(WORD_NS, 'w:jc');
+    jc.setAttributeNS(WORD_NS, 'w:val', 'center');
     pPr.appendChild(jc);
     newP.appendChild(pPr);
 
-    const newR = documentDom.createElement('w:r');
-    newR.appendChild(newDrawing);
+    const newR = documentDom.createElementNS(WORD_NS, 'w:r');
+    newR.appendChild(drawing);
     newP.appendChild(newR);
 
     cell.appendChild(newP);
@@ -370,11 +332,9 @@ async function insertImageToCell(
 
 async function populateDefectsTable(
   documentDom: any,
-  relsDom?: any,
-  zip?: PizZip,
+  imageWriter?: OoxmlImageWriter,
   defects: any[] = [],
   uploadsDirectory?: string,
-  templateDrawing?: any
 ) {
   const rows = documentDom.getElementsByTagNameNS(WORD_NS, 'tr');
 
@@ -483,10 +443,18 @@ async function populateDefectsTable(
         const photoCell = cells.item(1);
         if (photoCell) {
           const defectPhotos = defect.photos || [];
-          if (defectPhotos.length > 0 && relsDom && zip && uploadsDirectory && templateDrawing) {
+          if (defectPhotos.length > 0 && imageWriter && uploadsDirectory) {
             replaceCellText(photoCell, '');
-            for (const photo of defectPhotos) {
-              await insertImageToCell(documentDom, relsDom, zip, photoCell, photo, uploadsDirectory, templateDrawing, 0.75);
+            for (let photoIndex = 0; photoIndex < defectPhotos.length; photoIndex += 1) {
+              await insertImageToCell(
+                documentDom,
+                imageWriter,
+                photoCell,
+                defectPhotos[photoIndex],
+                uploadsDirectory,
+                { widthMm: 42, heightMm: 42 },
+                `defect_${photoIndex + 1}`,
+              );
             }
           } else {
             replaceCellText(photoCell, defectPhotos.length > 0 ? '[Photo Attached]' : 'N/A');
@@ -609,14 +577,10 @@ function populatePackagingTables(documentDom: any, job: CustomerReportJob) {
 
 async function populatePackagingPhotos(
   documentDom: any,
-  relsDom: any,
-  zip: PizZip,
+  imageWriter: OoxmlImageWriter,
   job: any,
   uploadsDirectory: string,
-  templateDrawing: any
 ) {
-  if (!templateDrawing) return;
-
   const pkg = job.packagingInfoData || (job as any).packaging_info_data || {};
   const cartonPhotos = pkg.cartonPhotos || [];
   const devicePhotos = pkg.devicePhotos || [];
@@ -631,8 +595,8 @@ async function populatePackagingPhotos(
     if (text.includes('{{carton_photos}}')) {
       if (cartonPhotos.length > 0) {
         replaceCellText(cell, '');
-        for (const photo of cartonPhotos) {
-          await insertImageToCell(documentDom, relsDom, zip, cell, photo, uploadsDirectory, templateDrawing, 0.75);
+        for (let photoIndex = 0; photoIndex < cartonPhotos.length; photoIndex += 1) {
+          await insertImageToCell(documentDom, imageWriter, cell, cartonPhotos[photoIndex], uploadsDirectory, { widthMm: 42, heightMm: 42 }, `carton_${photoIndex + 1}`);
         }
       } else {
         replaceCellText(cell, 'N/A');
@@ -640,8 +604,8 @@ async function populatePackagingPhotos(
     } else if (text.includes('{{device_photos}}')) {
       if (devicePhotos.length > 0) {
         replaceCellText(cell, '');
-        for (const photo of devicePhotos) {
-          await insertImageToCell(documentDom, relsDom, zip, cell, photo, uploadsDirectory, templateDrawing, 0.75);
+        for (let photoIndex = 0; photoIndex < devicePhotos.length; photoIndex += 1) {
+          await insertImageToCell(documentDom, imageWriter, cell, devicePhotos[photoIndex], uploadsDirectory, { widthMm: 42, heightMm: 42 }, `device_${photoIndex + 1}`);
         }
       } else {
         replaceCellText(cell, 'N/A');
@@ -649,8 +613,8 @@ async function populatePackagingPhotos(
     } else if (text.includes('{{barcode_photos}}')) {
       if (barcodePhotos.length > 0) {
         replaceCellText(cell, '');
-        for (const photo of barcodePhotos) {
-          await insertImageToCell(documentDom, relsDom, zip, cell, photo, uploadsDirectory, templateDrawing, 0.75);
+        for (let photoIndex = 0; photoIndex < barcodePhotos.length; photoIndex += 1) {
+          await insertImageToCell(documentDom, imageWriter, cell, barcodePhotos[photoIndex], uploadsDirectory, { widthMm: 42, heightMm: 42 }, `barcode_${photoIndex + 1}`);
         }
       } else {
         replaceCellText(cell, 'N/A');
@@ -659,160 +623,230 @@ async function populatePackagingPhotos(
   }
 }
 
+function createTextParagraph(documentDom: any, text: string, alignment?: 'center'): any {
+  const paragraph = documentDom.createElementNS(WORD_NS, 'w:p');
+  if (alignment) {
+    const properties = documentDom.createElementNS(WORD_NS, 'w:pPr');
+    const justification = documentDom.createElementNS(WORD_NS, 'w:jc');
+    justification.setAttributeNS(WORD_NS, 'w:val', alignment);
+    properties.appendChild(justification);
+    paragraph.appendChild(properties);
+  }
+  const run = documentDom.createElementNS(WORD_NS, 'w:r');
+  const textNode = documentDom.createElementNS(WORD_NS, 'w:t');
+  textNode.textContent = text;
+  run.appendChild(textNode);
+  paragraph.appendChild(run);
+  return paragraph;
+}
+
+function createDrawingParagraph(documentDom: any, drawing: any): any {
+  const paragraph = documentDom.createElementNS(WORD_NS, 'w:p');
+  const properties = documentDom.createElementNS(WORD_NS, 'w:pPr');
+  const justification = documentDom.createElementNS(WORD_NS, 'w:jc');
+  justification.setAttributeNS(WORD_NS, 'w:val', 'center');
+  properties.appendChild(justification);
+  paragraph.appendChild(properties);
+  const run = documentDom.createElementNS(WORD_NS, 'w:r');
+  run.appendChild(drawing);
+  paragraph.appendChild(run);
+  return paragraph;
+}
+
+function clearCellBody(cell: any): void {
+  const children = Array.from({ length: cell.childNodes.length }, (_, index) => cell.childNodes.item(index));
+  for (const child of children) {
+    if (child && child.localName !== 'tcPr') cell.removeChild(child);
+  }
+}
+
+function prepareDynamicRow(documentDom: any, row: any): void {
+  const heights = row.getElementsByTagNameNS(WORD_NS, 'trHeight');
+  for (let index = heights.length - 1; index >= 0; index -= 1) {
+    const height = heights.item(index);
+    if (height?.parentNode) height.parentNode.removeChild(height);
+  }
+
+  let rowProperties = row.getElementsByTagNameNS(WORD_NS, 'trPr').item(0);
+  if (!rowProperties) {
+    rowProperties = documentDom.createElementNS(WORD_NS, 'w:trPr');
+    row.insertBefore(rowProperties, row.firstChild);
+  }
+  if (!rowProperties.getElementsByTagNameNS(WORD_NS, 'cantSplit').length) {
+    rowProperties.appendChild(documentDom.createElementNS(WORD_NS, 'w:cantSplit'));
+  }
+}
+
+function findStepImageCell(row: any, imageTag?: string): any {
+  const cells = row.getElementsByTagNameNS(WORD_NS, 'tc');
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells.item(index);
+    if (!cell) continue;
+    const text = cell.textContent || '';
+    if (
+      cell.getElementsByTagNameNS(WORD_NS, 'drawing').length > 0
+      || text.includes('{{slot_label}}')
+      || (imageTag && text.includes(imageTag))
+    ) {
+      return cell;
+    }
+  }
+  return null;
+}
+
+function photoBoxForStep(step: ReportStep): ReportImageBox {
+  const maxWidthMm = step.photosPerRow === 2 ? 42 : 88;
+  const scale = Math.min(1, maxWidthMm / step.imageWidthMm);
+  return {
+    widthMm: step.imageWidthMm * scale,
+    heightMm: step.imageHeightMm * scale,
+  };
+}
+
+function createPhotoCell(documentDom: any, columnCount: number): any {
+  const cell = documentDom.createElementNS(WORD_NS, 'w:tc');
+  const properties = documentDom.createElementNS(WORD_NS, 'w:tcPr');
+  const width = documentDom.createElementNS(WORD_NS, 'w:tcW');
+  width.setAttributeNS(WORD_NS, 'w:w', String(Math.floor(5000 / columnCount)));
+  width.setAttributeNS(WORD_NS, 'w:type', 'pct');
+  properties.appendChild(width);
+  const verticalAlignment = documentDom.createElementNS(WORD_NS, 'w:vAlign');
+  verticalAlignment.setAttributeNS(WORD_NS, 'w:val', 'top');
+  properties.appendChild(verticalAlignment);
+  cell.appendChild(properties);
+  return cell;
+}
+
+async function populatePhotoGridCell(options: {
+  documentDom: any;
+  imageWriter: OoxmlImageWriter;
+  imageCell: any;
+  step: ReportStep;
+  uploadsDirectory: string;
+}): Promise<void> {
+  const { documentDom, imageWriter, imageCell, step, uploadsDirectory } = options;
+  clearCellBody(imageCell);
+
+  if (step.photoRows.length === 0) {
+    imageCell.appendChild(createTextParagraph(documentDom, 'Chưa thu thập ảnh', 'center'));
+    return;
+  }
+
+  const columnCount = step.photosPerRow;
+  const table = documentDom.createElementNS(WORD_NS, 'w:tbl');
+  const tableProperties = documentDom.createElementNS(WORD_NS, 'w:tblPr');
+  const tableWidth = documentDom.createElementNS(WORD_NS, 'w:tblW');
+  tableWidth.setAttributeNS(WORD_NS, 'w:w', '5000');
+  tableWidth.setAttributeNS(WORD_NS, 'w:type', 'pct');
+  tableProperties.appendChild(tableWidth);
+  const tableLayout = documentDom.createElementNS(WORD_NS, 'w:tblLayout');
+  tableLayout.setAttributeNS(WORD_NS, 'w:type', 'fixed');
+  tableProperties.appendChild(tableLayout);
+  const tableCaption = documentDom.createElementNS(WORD_NS, 'w:tblCaption');
+  tableCaption.setAttributeNS(WORD_NS, 'w:val', 'QC_PHOTO_GRID');
+  tableProperties.appendChild(tableCaption);
+  table.appendChild(tableProperties);
+
+  const tableGrid = documentDom.createElementNS(WORD_NS, 'w:tblGrid');
+  for (let column = 0; column < columnCount; column += 1) {
+    const gridColumn = documentDom.createElementNS(WORD_NS, 'w:gridCol');
+    gridColumn.setAttributeNS(WORD_NS, 'w:w', String(Math.floor(9000 / columnCount)));
+    tableGrid.appendChild(gridColumn);
+  }
+  table.appendChild(tableGrid);
+
+  const box = photoBoxForStep(step);
+  for (let rowIndex = 0; rowIndex < step.photoRows.length; rowIndex += 1) {
+    const photoRow = step.photoRows[rowIndex];
+    const row = documentDom.createElementNS(WORD_NS, 'w:tr');
+    const rowProperties = documentDom.createElementNS(WORD_NS, 'w:trPr');
+    rowProperties.appendChild(documentDom.createElementNS(WORD_NS, 'w:cantSplit'));
+    row.appendChild(rowProperties);
+    const rowPhotos: Array<ReportPhoto | undefined> = columnCount === 2
+      ? [photoRow.left, photoRow.right]
+      : [photoRow.left];
+
+    for (let columnIndex = 0; columnIndex < rowPhotos.length; columnIndex += 1) {
+      const photo = rowPhotos[columnIndex];
+      const cell = createPhotoCell(documentDom, columnCount);
+      if (!photo) {
+        cell.appendChild(createTextParagraph(documentDom, ''));
+        row.appendChild(cell);
+        continue;
+      }
+
+      const slotLabel = `Slot ${photo.slotIndex}`;
+      cell.appendChild(createTextParagraph(documentDom, slotLabel, 'center'));
+      try {
+        const source = await readFile(join(uploadsDirectory, basename(photo.storagePath)));
+        const { drawing } = await imageWriter.createDrawing({
+          source,
+          mediaName: `uploaded_step_${step.id}_slot_${photo.slotIndex}`,
+          altText: `${step.title} - ${slotLabel}`,
+          box,
+        });
+        cell.appendChild(createDrawingParagraph(documentDom, drawing));
+      } catch (err) {
+        console.warn(`Could not process photo for step ${step.id} slot ${photo.slotIndex}:`, err);
+        cell.appendChild(createTextParagraph(documentDom, `[Lỗi chèn ảnh: ${slotLabel}]`, 'center'));
+      }
+      row.appendChild(cell);
+    }
+    table.appendChild(row);
+  }
+
+  imageCell.appendChild(table);
+  imageCell.appendChild(createTextParagraph(documentDom, ''));
+}
+
 async function populateStepsTable(
   documentDom: any,
-  relsDom: any,
-  zip: PizZip,
-  job: any,
+  imageWriter: OoxmlImageWriter,
+  job: CustomerReportJob,
   photos: CustomerReportPhoto[],
-  uploadsDirectory: string
+  uploadsDirectory: string,
 ) {
   const rows = documentDom.getElementsByTagNameNS(WORD_NS, 'tr');
   let templateRow: any = null;
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows.item(i);
-    if (!row) continue;
-    const textContent = row.textContent || '';
-    if (textContent.includes('{{step_title}}')) {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows.item(index);
+    if ((row?.textContent || '').includes('{{step_title}}')) {
       templateRow = row;
       break;
     }
   }
 
-  if (!templateRow || !templateRow.parentNode) return;
-
+  if (!templateRow?.parentNode) return;
   const parentTable = templateRow.parentNode;
+  const reportSteps = buildCustomerReportSteps(job, photos);
 
-  const stepResults = job.stepResults || [];
-  const templateSteps = job.template_snapshot?.steps || [];
-
-  for (let idx = 0; idx < stepResults.length; idx++) {
-    const sr = stepResults[idx];
-    const stepDef = templateSteps.find((s: any) => s.stepId === sr.stepId);
-    const stepTitle = stepDef ? stepDef.title : `Bước ${sr.stepId}`;
-    const sampleSize = sr.sampleSize || stepDef?.sampleSize || job.template_snapshot?.orderQty || '120 pcs';
-    
-    let resultText = 'Pending';
-    if (sr.status === 'PASS') {
-      resultText = `${sr.sampleSize || stepDef?.sampleSize || job.template_snapshot?.orderQty || '117 pcs'} Pass`;
-    } else if (sr.status === 'FAIL') {
-      resultText = 'Defective';
-    }
-
-    let commentText = sr.note || 'Không có ghi chú';
-    if (sr.textValue) {
-      commentText += `\nDữ liệu nhập: ${sr.textValue}`;
-    }
-    if (sr.aiDetectedValue) {
-      commentText += `\nVero: ${sr.aiDetectedValue}`;
-    }
-    if (sr.adminReviewNote) {
-      commentText += `\nGhi chú Admin: ${sr.adminReviewNote}`;
-    }
-
+  for (const step of reportSteps) {
     const newRow = templateRow.cloneNode(true) as Element;
+    const imageCell = findStepImageCell(newRow, step.imageTag);
+    prepareDynamicRow(documentDom, newRow);
 
     const rowReplacements: Record<string, string> = {
-      '{{step_idx}}': String(idx + 1),
-      '{{step_title}}': stepTitle,
-      '{{step_sample}}': sampleSize,
-      '{{step_result}}': resultText,
-      '{{step_comment}}': commentText,
+      '{{step_idx}}': String(step.ordinal),
+      '{{step_title}}': step.title,
+      '{{step_sample}}': step.sampleSize,
+      '{{step_result}}': step.resultText,
+      '{{step_comment}}': step.commentText,
     };
-
-    if (stepDef?.mapping) {
-      if (stepDef.mapping.noteTag) rowReplacements[stepDef.mapping.noteTag] = commentText;
-      if (stepDef.mapping.statusTag) rowReplacements[stepDef.mapping.statusTag] = resultText;
-      if (stepDef.mapping.imageTag) rowReplacements[stepDef.mapping.imageTag] = '[Photo Attached]';
-    }
-
+    if (step.noteTag) rowReplacements[step.noteTag] = step.commentText;
+    if (step.statusTag) rowReplacements[step.statusTag] = step.resultText;
+    if (step.imageTag) rowReplacements[step.imageTag] = '';
     replaceTextInElement(newRow, rowReplacements);
 
-    const stepPhotos = getPhotosForStep(photos, sr.stepId, idx)
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-    
-    const latestBySlot = new Map<number, CustomerReportPhoto>();
-    stepPhotos.forEach((photo) => latestBySlot.set(Number(photo.slot_index), photo));
-    const onePhotoPerSlot = [...latestBySlot.entries()].sort((a, b) => a[0] - b[0]).map(([, photo]) => photo);
-
-    const drawings = newRow.getElementsByTagNameNS(WORD_NS, 'drawing');
-    let imageCell: any = null;
-    let templateP: any = null;
-
-    if (drawings.length > 0) {
-      const drawing = drawings.item(0);
-      let parent: any = drawing?.parentNode;
-      while (parent && parent.nodeName !== 'w:p') {
-        parent = parent.parentNode;
-      }
-      if (parent) {
-        templateP = parent;
-        imageCell = templateP.parentNode;
-      }
+    if (imageCell) {
+      await populatePhotoGridCell({
+        documentDom,
+        imageWriter,
+        imageCell,
+        step,
+        uploadsDirectory,
+      });
     }
-
-    if (imageCell && templateP) {
-      if (onePhotoPerSlot.length === 0) {
-        const noPhotoP = documentDom.createElement('w:p');
-        const noPhotoR = documentDom.createElement('w:r');
-        const noPhotoT = documentDom.createElement('w:t');
-        noPhotoT.textContent = 'Chưa thu thập ảnh';
-        noPhotoR.appendChild(noPhotoT);
-        noPhotoP.appendChild(noPhotoR);
-        imageCell.insertBefore(noPhotoP, templateP);
-      } else {
-        for (let pIdx = 0; pIdx < onePhotoPerSlot.length; pIdx++) {
-          const photo = onePhotoPerSlot[pIdx];
-          const photoP = templateP.cloneNode(true);
-
-          const slotLabel = photo.slot_index ? `Slot ${photo.slot_index}` : `Ảnh ${pIdx + 1}`;
-          replaceTextInElement(photoP, { '{{slot_label}}': slotLabel });
-
-          const nextRId = getNextRelationshipId(relsDom);
-          const mediaFileName = `uploaded_step_${sr.stepId}_${pIdx}_${Date.now()}.png`;
-          const mediaPath = `word/media/${mediaFileName}`;
-
-          try {
-            const source = await readFile(join(uploadsDirectory, basename(photo.storage_path)));
-            const aspect = getSlotAspectRatio(sr.stepId, idx, pIdx);
-            const png = await processImageWithCoverFit(source, aspect);
-            zip.file(mediaPath, png, { compression: 'STORE' });
-
-            const relationshipsEl = relsDom.getElementsByTagName('Relationships').item(0);
-            if (relationshipsEl) {
-              const newRel = relsDom.createElement('Relationship');
-              newRel.setAttribute('Id', nextRId);
-              newRel.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image');
-              newRel.setAttribute('Target', `media/${mediaFileName}`);
-              relationshipsEl.appendChild(newRel);
-            }
-
-            const blips = photoP.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip');
-            for (let b = 0; b < blips.length; b++) {
-              const blip = blips.item(b);
-              if (blip) {
-                blip.setAttribute('r:embed', nextRId);
-                blip.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'r:embed', nextRId);
-              }
-            }
-
-            imageCell.insertBefore(photoP, templateP);
-          } catch (err) {
-            console.warn(`Could not process photo for step ${sr.stepId} slot ${photo.slot_index}:`, err);
-            const errorP = documentDom.createElement('w:p');
-            const errorR = documentDom.createElement('w:r');
-            const errorT = documentDom.createElement('w:t');
-            errorT.textContent = `[Lỗi chèn ảnh: ${slotLabel}]`;
-            errorR.appendChild(errorT);
-            errorP.appendChild(errorR);
-            imageCell.insertBefore(errorP, templateP);
-          }
-        }
-      }
-      imageCell.removeChild(templateP);
-    }
-
     parentTable.insertBefore(newRow, templateRow);
   }
 
@@ -844,13 +878,6 @@ export async function buildX530CustomerReport(options: {
   const pkg = options.job.packagingInfoData || (options.job as any).packaging_info_data || {};
   const other = options.job.otherInfoData || (options.job as any).other_info_data || {};
 
-  const documentDomForExtract = new DOMParser().parseFromString(docXmlText, 'application/xml');
-  const docDrawings = documentDomForExtract.getElementsByTagNameNS(WORD_NS, 'drawing');
-  let templateDrawing: any = null;
-  if (docDrawings.length > 0) {
-    templateDrawing = docDrawings.item(0).cloneNode(true);
-  }
-
   if (isDynamicTemplate) {
     const documentDom = new DOMParser().parseFromString(docXmlText, 'application/xml');
 
@@ -878,10 +905,11 @@ export async function buildX530CustomerReport(options: {
     const relsFile = zip.file('word/_rels/document.xml.rels');
     if (!relsFile) throw new Error('Invalid DOCX: word/_rels/document.xml.rels not found.');
     const relsDom = new DOMParser().parseFromString(relsFile.asText(), 'application/xml');
+    const imageWriter = new OoxmlImageWriter(documentDom, relsDom, zip);
 
-    await populateDefectsTable(documentDom, relsDom, zip, defects, options.uploadsDirectory, templateDrawing);
+    await populateDefectsTable(documentDom, imageWriter, defects, options.uploadsDirectory);
     populatePackagingTables(documentDom, options.job);
-    await populatePackagingPhotos(documentDom, relsDom, zip, options.job, options.uploadsDirectory, templateDrawing);
+    await populatePackagingPhotos(documentDom, imageWriter, options.job, options.uploadsDirectory);
 
     const otherPhotos = other.photos || [];
     const cells = documentDom.getElementsByTagNameNS(WORD_NS, 'tc');
@@ -890,10 +918,10 @@ export async function buildX530CustomerReport(options: {
       if (!cell) continue;
       const text = cell.textContent || '';
       if (text.includes('{{other_photos}}')) {
-        if (otherPhotos.length > 0 && templateDrawing) {
+        if (otherPhotos.length > 0) {
           replaceCellText(cell, '');
-          for (const photo of otherPhotos) {
-            await insertImageToCell(documentDom, relsDom, zip, cell, photo, options.uploadsDirectory, templateDrawing, 0.75);
+          for (let photoIndex = 0; photoIndex < otherPhotos.length; photoIndex += 1) {
+            await insertImageToCell(documentDom, imageWriter, cell, otherPhotos[photoIndex], options.uploadsDirectory, { widthMm: 42, heightMm: 42 }, `other_${photoIndex + 1}`);
           }
         } else {
           replaceCellText(cell, 'N/A');
@@ -918,7 +946,7 @@ export async function buildX530CustomerReport(options: {
     };
     replaceTextInElement(documentDom, pkgReplacements);
 
-    await populateStepsTable(documentDom, relsDom, zip, options.job, options.photos, options.uploadsDirectory);
+    await populateStepsTable(documentDom, imageWriter, options.job, options.photos, options.uploadsDirectory);
 
     zip.file('word/_rels/document.xml.rels', new XMLSerializer().serializeToString(relsDom));
     zip.file('word/document.xml', new XMLSerializer().serializeToString(documentDom));
@@ -951,7 +979,7 @@ export async function buildX530CustomerReport(options: {
     const staticDocXml = zip.file('word/document.xml');
     if (staticDocXml) {
       const staticDom = new DOMParser().parseFromString(staticDocXml.asText(), 'application/xml');
-      await populateDefectsTable(staticDom, undefined, undefined, defects, undefined, undefined);
+      await populateDefectsTable(staticDom, undefined, defects, undefined);
       populatePackagingTables(staticDom, options.job);
       zip.file('word/document.xml', new XMLSerializer().serializeToString(staticDom));
     }
@@ -975,16 +1003,17 @@ export async function buildX530CustomerReport(options: {
       stepPhotos.forEach((photo) => latestBySlot.set(Number(photo.slot_index), photo));
       const onePhotoPerSlot = [...latestBySlot.entries()].sort((left, right) => left[0] - right[0]).map(([, photo]) => photo);
 
-      for (let index = 0; index < Math.min(onePhotoPerSlot.length, targets.length); index += 1) {
-        const photo = onePhotoPerSlot[index];
+      for (const photo of onePhotoPerSlot) {
+        const targetIndex = Number(photo.slot_index) - 1;
+        if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= targets.length) continue;
         try {
           const source = await readFile(join(options.uploadsDirectory, basename(photo.storage_path)));
-          const aspect = getSlotAspectRatio(stepIdToMatch, stepIndex, index);
-          const png = await processImageWithCoverFit(source, aspect);
-          zip.file(targets[index], png, { compression: 'STORE' });
+          const aspect = getSlotAspectRatio(stepIdToMatch, stepIndex, targetIndex);
+          const png = await processImageWithContainFit(source, aspect);
+          zip.file(targets[targetIndex], png, { compression: 'STORE' });
         } catch (err) {
-          console.warn(`Could not process static photo for step ${stepIdToMatch} slot index ${index}:`, err);
-          zip.file(targets[index], blankEvidenceImage, { compression: 'STORE' });
+          console.warn(`Could not process static photo for step ${stepIdToMatch} slot index ${targetIndex}:`, err);
+          zip.file(targets[targetIndex], blankEvidenceImage, { compression: 'STORE' });
         }
       }
     }
