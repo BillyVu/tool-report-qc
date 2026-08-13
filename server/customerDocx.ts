@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { DOMParser, XMLSerializer, Document, Element, Node } from '@xmldom/xmldom';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import PizZip from 'pizzip';
 import sharp from 'sharp';
 
@@ -29,6 +29,12 @@ const X530_ALL_EVIDENCE_TARGETS = [
   ...imageRange(16, 144).filter((path) => path !== 'word/media/image107.png'),
 ];
 
+/**
+ * Aspect ratio (width/height) of each evidence image slot in the X530 template,
+ * measured from `<wp:extent>` in word/document.xml. Keyed by step, indexed by
+ * slot_index - 1 in the same order as X530_STEP_IMAGE_TARGETS. Used to size the
+ * capture crop frame on the worker portal and to crop photos exactly on export.
+ */
 export const X530_SLOT_ASPECT_RATIOS: Record<string, number[]> = {
   STEP_1: [0.5204, 0.5142, 0.5205, 0.9793, 2.2817, 2.5963],
   STEP_2: [0.5367, 0.5292, 0.51, 0.5254, 0.6436, 0.6444, 0.5601, 0.5449, 0.5584],
@@ -42,6 +48,11 @@ export const X530_SLOT_ASPECT_RATIOS: Record<string, number[]> = {
   STEP_10: [0.6442, 0.6871, 0.6676, 0.6899, 0.7061, 1.9337, 1.6838, 2.1724, 2.0186, 2.1202, 1.883, 1.1971, 1.3991, 1.8129, 1.5417, 1.3902, 1.3168, 0.8517, 0.8109, 0.964, 0.9519, 1.4662, 1.5885, 1.1343, 2.0235, 1.2604, 2.1202, 1.6436, 0.9231, 1.022, 0.8433, 0.9093, 0.7239, 0.7263, 1.8837, 1.7741, 0.7314, 0.7566, 1.6578, 1.6747],
 };
 
+/**
+ * Enriches a served template snapshot with the report slot aspect ratio per
+ * photo slot, so the worker portal crop frame matches the exact report cell.
+ * Never mutates the persisted snapshot.
+ */
 export function applyX530SlotAspectRatios(template: unknown): unknown {
   if (!template || typeof template !== 'object') return template;
   const steps = (template as { steps?: unknown }).steps;
@@ -77,6 +88,12 @@ export function applyX530SlotAspectRatios(template: unknown): unknown {
   };
 }
 
+function reportAspectDimensions(aspect: number, maxSide: number = 1400): { width: number; height: number } {
+  return aspect >= 1
+    ? { width: maxSide, height: Math.round(maxSide / aspect) }
+    : { width: Math.round(maxSide * aspect), height: maxSide };
+}
+
 interface CustomerReportJob {
   external_id: string;
   batch_number: string;
@@ -87,7 +104,6 @@ interface CustomerReportJob {
     steps?: any[];
     cartonSpec?: string;
     deviceSpec?: string;
-    productCode?: string;
   };
   defectsFindingData?: any[];
   packagingInfoData?: any;
@@ -102,6 +118,10 @@ export interface CustomerReportPhoto {
   created_at: string | Date;
 }
 
+/**
+ * Replaces placeholders inside any XML element or Document.
+ * Supports placeholders split across multiple <w:t> runs.
+ */
 function replaceTextInElement(element: Element | Document, replacements: Record<string, string>): void {
   const paragraphs = element.getElementsByTagNameNS(WORD_NS, 'p');
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
@@ -220,12 +240,6 @@ function getSlotAspectRatio(stepId: string, stepIndex: number, slotIndex: number
   return 0.75;
 }
 
-function reportAspectDimensions(aspect: number, maxSide: number = 1400): { width: number; height: number } {
-  return aspect >= 1
-    ? { width: maxSide, height: Math.round(maxSide / aspect) }
-    : { width: Math.round(maxSide * aspect), height: maxSide };
-}
-
 async function processImageWithCoverFit(source: Buffer, targetAspect: number): Promise<Buffer> {
   try {
     const { width: outW, height: outH } = reportAspectDimensions(targetAspect, 1400);
@@ -243,7 +257,6 @@ async function processImageWithCoverFit(source: Buffer, targetAspect: number): P
 function replaceCellText(cell: Element | null, text: string) {
   if (!cell) return;
 
-  // Do not write text into vMerge continuation cells to avoid corrupting Word XML table layout
   const tcPr = cell.getElementsByTagNameNS(WORD_NS, 'tcPr').item(0);
   if (tcPr) {
     const vMerge = tcPr.getElementsByTagNameNS(WORD_NS, 'vMerge').item(0);
@@ -278,10 +291,91 @@ function replaceCellText(cell: Element | null, text: string) {
   }
 }
 
-function populateDefectsTable(documentDom: Document, defects: any[]) {
+function getUrlFromPhoto(photo: any): string {
+  if (!photo) return '';
+  if (typeof photo === 'string') return photo;
+  if (typeof photo === 'object' && typeof photo.url === 'string') return photo.url;
+  return '';
+}
+
+async function insertImageToCell(
+  documentDom: Document,
+  relsDom: Document,
+  zip: PizZip,
+  cell: Element,
+  photo: any,
+  uploadsDirectory: string,
+  templateDrawing: Element,
+  aspect: number = 0.75
+): Promise<void> {
+  const photoUrl = getUrlFromPhoto(photo);
+  if (!photoUrl) return;
+
+  const fileName = basename(photoUrl);
+  const filePath = join(uploadsDirectory, fileName);
+
+  try {
+    const source = await readFile(filePath);
+    const nextRId = getNextRelationshipId(relsDom);
+    const mediaFileName = `dyn_inserted_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.png`;
+    const mediaPath = `word/media/${mediaFileName}`;
+
+    const png = await processImageWithCoverFit(source, aspect);
+    zip.file(mediaPath, png, { compression: 'STORE' });
+
+    const relationshipsEl = relsDom.getElementsByTagName('Relationships').item(0);
+    if (relationshipsEl) {
+      const newRel = relsDom.createElement('Relationship');
+      newRel.setAttribute('Id', nextRId);
+      newRel.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image');
+      newRel.setAttribute('Target', `media/${mediaFileName}`);
+      relationshipsEl.appendChild(newRel);
+    }
+
+    const newDrawing = templateDrawing.cloneNode(true) as Element;
+    const blips = newDrawing.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip');
+    for (let b = 0; b < blips.length; b++) {
+      const blip = blips.item(b);
+      if (blip) {
+        blip.setAttribute('r:embed', nextRId);
+        blip.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'r:embed', nextRId);
+      }
+    }
+
+    const newP = documentDom.createElement('w:p');
+    const pPr = documentDom.createElement('w:pPr');
+    const jc = documentDom.createElement('w:jc');
+    jc.setAttribute('w:val', 'center');
+    pPr.appendChild(jc);
+    newP.appendChild(pPr);
+
+    const newR = documentDom.createElement('w:r');
+    newR.appendChild(newDrawing);
+    newP.appendChild(newR);
+
+    cell.appendChild(newP);
+  } catch (err) {
+    console.warn(`Could not insert image to cell for file ${fileName}:`, err);
+    const errorP = documentDom.createElement('w:p');
+    const errorR = documentDom.createElement('w:r');
+    const errorT = documentDom.createElement('w:t');
+    errorT.textContent = `[Lỗi chèn ảnh: ${fileName}]`;
+    errorR.appendChild(errorT);
+    errorP.appendChild(errorR);
+    cell.appendChild(errorP);
+  }
+}
+
+async function populateDefectsTable(
+  documentDom: Document,
+  relsDom?: Document,
+  zip?: PizZip,
+  defects: any[] = [],
+  uploadsDirectory?: string,
+  templateDrawing?: Element | null
+) {
   const rows = documentDom.getElementsByTagNameNS(WORD_NS, 'tr');
 
-  // Collect all relevant rows across the entire document
   const sampleDefectRows: Element[] = [];
   const noDefectRows: Element[] = [];
   const totalFoundRows: Element[] = [];
@@ -292,7 +386,6 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
     if (!row) continue;
     const text = row.textContent || '';
 
-    // Match sample defect data rows (the 3 baked-in rows)
     if (
       text.includes('Surface scratch') ||
       text.includes('016724000204989') ||
@@ -302,8 +395,6 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
       text.includes('016724000176104') ||
       text.includes('{{defect_desc}}')
     ) {
-      // Exclude step summary rows (e.g. Row 99 "Appearance check...Surface scratch...")
-      // Step rows typically have much more content and contain step-related text
       const isStepRow = text.includes('Appearance check') || text.includes('pcs') || text.length > 200;
       if (!isStepRow) {
         if (!firstSampleRow) firstSampleRow = row;
@@ -311,18 +402,15 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
       }
     }
 
-    // Match "No defect" placeholder rows
     if (text.includes('No defect') && !text.includes('Total') && !text.includes('Max')) {
       noDefectRows.push(row);
     }
 
-    // Match "Total Found" summary rows
     if (text.includes('Total') && text.includes('Found')) {
       totalFoundRows.push(row);
     }
   }
 
-  // Calculate totals from actual defects
   const totalCritical = defects.filter((d) => d.defectType === 'Critical').reduce((sum, d) => sum + (Number(d.count) || 1), 0);
   const totalMajor = defects.filter((d) => d.defectType === 'Major').reduce((sum, d) => sum + (Number(d.count) || 1), 0);
   const totalMinor = defects.filter((d) => {
@@ -330,10 +418,8 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
     return t === 'Minor' || !t || (t !== 'Critical' && t !== 'Major');
   }).reduce((sum, d) => sum + (Number(d.count) || 1), 0);
 
-  // Update ALL "Total Found" rows
   for (const tfRow of totalFoundRows) {
     const cells = tfRow.getElementsByTagNameNS(WORD_NS, 'tc');
-    // "Total Found:" is in cell 0, then Photo/-- in cell 1, Critical, Major, Minor
     if (cells.length >= 5) {
       replaceCellText(cells.item(2), String(totalCritical));
       replaceCellText(cells.item(3), String(totalMajor));
@@ -345,27 +431,22 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
     }
   }
 
-  // Save the parent table reference BEFORE removing rows
   const sampleRowParent = firstSampleRow?.parentNode || null;
 
-  // Remove ALL sample defect rows
   for (const row of sampleDefectRows) {
     if (row.parentNode) row.parentNode.removeChild(row);
   }
 
-  // Remove existing "No defect" placeholder rows
   for (const row of noDefectRows) {
     if (row.parentNode) row.parentNode.removeChild(row);
   }
 
-  // Find the best insertion point: before the first "Total Found" row, or in the sample row's parent table
   const insertionParent = totalFoundRows[0]?.parentNode || sampleRowParent;
   const insertBefore = totalFoundRows[0] || null;
 
-  if (!insertionParent) return; // No table structure found at all
+  if (!insertionParent) return;
 
   if (defects.length === 0) {
-    // Create a "No defect" row by cloning the first sample row or Total Found row
     const templateRow = firstSampleRow || totalFoundRows[0];
     if (!templateRow) return;
 
@@ -387,7 +468,7 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
     const templateRow = firstSampleRow || totalFoundRows[0];
     if (!templateRow) return;
 
-    defects.forEach((defect) => {
+    for (const defect of defects) {
       const isCritical = defect.defectType === 'Critical';
       const isMajor = defect.defectType === 'Major';
       const isMinor = defect.defectType === 'Minor' || (!isCritical && !isMajor);
@@ -396,7 +477,20 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
       const cells = newRow.getElementsByTagNameNS(WORD_NS, 'tc');
       if (cells.length >= 5) {
         replaceCellText(cells.item(0), defect.description || '');
-        replaceCellText(cells.item(1), defect.photos?.length ? '[Photo Attached]' : 'N/A');
+
+        const photoCell = cells.item(1);
+        if (photoCell) {
+          const defectPhotos = defect.photos || [];
+          if (defectPhotos.length > 0 && relsDom && zip && uploadsDirectory && templateDrawing) {
+            replaceCellText(photoCell, '');
+            for (const photo of defectPhotos) {
+              await insertImageToCell(documentDom, relsDom, zip, photoCell, photo, uploadsDirectory, templateDrawing, 0.75);
+            }
+          } else {
+            replaceCellText(photoCell, defectPhotos.length > 0 ? '[Photo Attached]' : 'N/A');
+          }
+        }
+
         replaceCellText(cells.item(2), isCritical ? String(defect.count || 1) : '');
         replaceCellText(cells.item(3), isMajor ? String(defect.count || 1) : '');
         replaceCellText(cells.item(4), isMinor ? String(defect.count || 1) : '');
@@ -407,7 +501,7 @@ function populateDefectsTable(documentDom: Document, defects: any[]) {
       } else {
         insertionParent.appendChild(newRow);
       }
-    });
+    }
   }
 }
 
@@ -506,6 +600,58 @@ function populatePackagingTables(documentDom: Document, job: CustomerReportJob) 
             replaceCellText(cells.item(4), barcodeResult);
           }
         }
+      }
+    }
+  }
+}
+
+async function populatePackagingPhotos(
+  documentDom: Document,
+  relsDom: Document,
+  zip: PizZip,
+  job: any,
+  uploadsDirectory: string,
+  templateDrawing: Element | null
+) {
+  if (!templateDrawing) return;
+
+  const pkg = job.packagingInfoData || (job as any).packaging_info_data || {};
+  const cartonPhotos = pkg.cartonPhotos || [];
+  const devicePhotos = pkg.devicePhotos || [];
+  const barcodePhotos = pkg.barcodePhotos || [];
+
+  const cells = documentDom.getElementsByTagNameNS(WORD_NS, 'tc');
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells.item(i);
+    if (!cell) continue;
+    const text = cell.textContent || '';
+
+    if (text.includes('{{carton_photos}}')) {
+      if (cartonPhotos.length > 0) {
+        replaceCellText(cell, '');
+        for (const photo of cartonPhotos) {
+          await insertImageToCell(documentDom, relsDom, zip, cell, photo, uploadsDirectory, templateDrawing, 0.75);
+        }
+      } else {
+        replaceCellText(cell, 'N/A');
+      }
+    } else if (text.includes('{{device_photos}}')) {
+      if (devicePhotos.length > 0) {
+        replaceCellText(cell, '');
+        for (const photo of devicePhotos) {
+          await insertImageToCell(documentDom, relsDom, zip, cell, photo, uploadsDirectory, templateDrawing, 0.75);
+        }
+      } else {
+        replaceCellText(cell, 'N/A');
+      }
+    } else if (text.includes('{{barcode_photos}}')) {
+      if (barcodePhotos.length > 0) {
+        replaceCellText(cell, '');
+        for (const photo of barcodePhotos) {
+          await insertImageToCell(documentDom, relsDom, zip, cell, photo, uploadsDirectory, templateDrawing, 0.75);
+        }
+      } else {
+        replaceCellText(cell, 'N/A');
       }
     }
   }
@@ -696,6 +842,13 @@ export async function buildX530CustomerReport(options: {
   const pkg = options.job.packagingInfoData || (options.job as any).packaging_info_data || {};
   const other = options.job.otherInfoData || (options.job as any).other_info_data || {};
 
+  const documentDomForExtract = new DOMParser().parseFromString(docXmlText, 'application/xml');
+  const docDrawings = documentDomForExtract.getElementsByTagNameNS(WORD_NS, 'drawing');
+  let templateDrawing: Element | null = null;
+  if (docDrawings.length > 0) {
+    templateDrawing = docDrawings.item(0).cloneNode(true) as Element;
+  }
+
   if (isDynamicTemplate) {
     const documentDom = new DOMParser().parseFromString(docXmlText, 'application/xml');
 
@@ -720,8 +873,31 @@ export async function buildX530CustomerReport(options: {
       zip.file('word/header1.xml', new XMLSerializer().serializeToString(headerDom));
     }
 
-    populateDefectsTable(documentDom, defects);
+    const relsFile = zip.file('word/_rels/document.xml.rels');
+    if (!relsFile) throw new Error('Invalid DOCX: word/_rels/document.xml.rels not found.');
+    const relsDom = new DOMParser().parseFromString(relsFile.asText(), 'application/xml');
+
+    await populateDefectsTable(documentDom, relsDom, zip, defects, options.uploadsDirectory, templateDrawing);
     populatePackagingTables(documentDom, options.job);
+    await populatePackagingPhotos(documentDom, relsDom, zip, options.job, options.uploadsDirectory, templateDrawing);
+
+    const otherPhotos = other.photos || [];
+    const cells = documentDom.getElementsByTagNameNS(WORD_NS, 'tc');
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells.item(i);
+      if (!cell) continue;
+      const text = cell.textContent || '';
+      if (text.includes('{{other_photos}}')) {
+        if (otherPhotos.length > 0 && templateDrawing) {
+          replaceCellText(cell, '');
+          for (const photo of otherPhotos) {
+            await insertImageToCell(documentDom, relsDom, zip, cell, photo, options.uploadsDirectory, templateDrawing, 0.75);
+          }
+        } else {
+          replaceCellText(cell, 'N/A');
+        }
+      }
+    }
 
     const pkgReplacements: Record<string, string> = {
       '{{carton_spec}}': options.job.template_snapshot?.cartonSpec || pkg.cartonSpec || '310x195x125mm',
@@ -739,10 +915,6 @@ export async function buildX530CustomerReport(options: {
       '{{other_notes}}': other.notes || 'N/A',
     };
     replaceTextInElement(documentDom, pkgReplacements);
-
-    const relsFile = zip.file('word/_rels/document.xml.rels');
-    if (!relsFile) throw new Error('Invalid DOCX: word/_rels/document.xml.rels not found.');
-    const relsDom = new DOMParser().parseFromString(relsFile.asText(), 'application/xml');
 
     await populateStepsTable(documentDom, relsDom, zip, options.job, options.photos, options.uploadsDirectory);
 
@@ -774,11 +946,10 @@ export async function buildX530CustomerReport(options: {
       if (xmlFile) zip.file(xmlPath, replaceTextAcrossRuns(xmlFile.asText(), replacements));
     }
 
-    // Parse document DOM and clean up static sample defect rows
     const staticDocXml = zip.file('word/document.xml');
     if (staticDocXml) {
       const staticDom = new DOMParser().parseFromString(staticDocXml.asText(), 'application/xml');
-      populateDefectsTable(staticDom, defects);
+      await populateDefectsTable(staticDom, undefined, undefined, defects, undefined, undefined);
       populatePackagingTables(staticDom, options.job);
       zip.file('word/document.xml', new XMLSerializer().serializeToString(staticDom));
     }
@@ -804,10 +975,15 @@ export async function buildX530CustomerReport(options: {
 
       for (let index = 0; index < Math.min(onePhotoPerSlot.length, targets.length); index += 1) {
         const photo = onePhotoPerSlot[index];
-        const source = await readFile(join(options.uploadsDirectory, basename(photo.storage_path)));
-        const aspect = getSlotAspectRatio(stepIdToMatch, stepIndex, index);
-        const png = await processImageWithCoverFit(source, aspect);
-        zip.file(targets[index], png, { compression: 'STORE' });
+        try {
+          const source = await readFile(join(options.uploadsDirectory, basename(photo.storage_path)));
+          const aspect = getSlotAspectRatio(stepIdToMatch, stepIndex, index);
+          const png = await processImageWithCoverFit(source, aspect);
+          zip.file(targets[index], png, { compression: 'STORE' });
+        } catch (err) {
+          console.warn(`Could not process static photo for step ${stepIdToMatch} slot index ${index}:`, err);
+          zip.file(targets[index], blankEvidenceImage, { compression: 'STORE' });
+        }
       }
     }
   }

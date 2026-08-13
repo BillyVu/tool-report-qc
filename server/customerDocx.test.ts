@@ -160,6 +160,13 @@ test('dynamically populates defects, packaging, and step rows with unique images
     <w:p><w:r><w:t>Carton Spec: {{carton_spec}}</w:t></w:r></w:p>
     <w:p><w:r><w:t>Carton Measured: {{carton_size}}</w:t></w:r></w:p>
     <w:p><w:r><w:t>Barcode Data: {{barcode_data}}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Carton Photos: {{carton_photos}}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Device Photos: {{device_photos}}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Barcode Photos: {{barcode_photos}}</w:t></w:r></w:p>
+
+    <!-- Other Info -->
+    <w:p><w:r><w:t>Other Notes: {{other_notes}}</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Other Photos: {{other_photos}}</w:t></w:r></w:p>
 
     <!-- Steps Table -->
     <w:tbl>
@@ -215,11 +222,18 @@ test('dynamically populates defects, packaging, and step rows with unique images
           ]
         },
         defectsFindingData: [
-          { description: 'Trầy xước bề mặt', defectType: 'Major', count: 3, photos: ['evidence_dynamic.png'] }
+          { description: 'Trầy xước bề mặt', defectType: 'Major', count: 3, photos: ['/uploads/evidence_dynamic.png'] }
         ],
         packagingInfoData: {
           cartonMeasuredSize: '398x299x199mm',
-          barcodeData: 'BARCODE-XYZ-123'
+          barcodeData: 'BARCODE-XYZ-123',
+          cartonPhotos: ['/uploads/evidence_dynamic.png'],
+          devicePhotos: ['/uploads/evidence_dynamic.png'],
+          barcodePhotos: ['/uploads/evidence_dynamic.png']
+        },
+        otherInfoData: {
+          notes: 'Ghi chú bổ sung của worker',
+          photos: ['/uploads/evidence_dynamic.png', '/uploads/evidence_dynamic.png']
         },
         stepResults: [
           { stepId: 'STEP_1', status: 'PASS', note: 'Đạt yêu cầu', sampleSize: '120 pcs' }
@@ -243,13 +257,15 @@ test('dynamically populates defects, packaging, and step rows with unique images
 
     // Check defects table rendering
     assert.match(documentXml, /Trầy xước bề mặt/);
-    assert.match(documentXml, /\[Photo Attached\]/);
     assert.match(documentXml, /<w:t>3<\/w:t>/); // Major count
 
     // Check packaging info replacements
     assert.match(documentXml, /Carton Spec: 400x300x200mm/);
     assert.match(documentXml, /Carton Measured: 398x299x199mm/);
     assert.match(documentXml, /Barcode Data: BARCODE-XYZ-123/);
+
+    // Check other info replacements
+    assert.match(documentXml, /Other Notes: Ghi chú bổ sung của worker/);
 
     // Check steps table rendering
     assert.match(documentXml, /Kiểm tra bề mặt/);
@@ -258,6 +274,7 @@ test('dynamically populates defects, packaging, and step rows with unique images
 
     // Check relationship files contain the newly registered image relationship
     assert.match(relsXmlOutput, /Target="media\/uploaded_step_STEP_1_0_/);
+    assert.match(relsXmlOutput, /Target="media\/dyn_inserted_/);
     
     // Find the newly registered rId and check if it is embedded in the blip tag of the document
     const relIdMatch = relsXmlOutput.match(/Id="(rId\d+)"[^>]+Target="media\/uploaded_step_STEP_1_0_/);
