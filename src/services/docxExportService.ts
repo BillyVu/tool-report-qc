@@ -34,6 +34,24 @@ interface StepImageBuffer {
 const SUPPORTED_IMAGE_TYPES = new Set<ExportImageType>(['png', 'jpg', 'gif', 'bmp']);
 const SUPPORTED_SOURCE_IMAGE_TYPES = new Set<SourceImageType>(['png', 'jpg', 'gif', 'bmp', 'webp']);
 const X530_CUSTOMER_TEMPLATE_NAME = 'X530 Knobs_Inspection Report 100-70-260722-117pcs_ATT.docx';
+const IMAGE_FETCH_CONCURRENCY = 6;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const runner = async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await worker(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, () => runner()));
+  return results;
+}
 
 function normalizeImageType(rawType?: string | null): SourceImageType | null {
   const normalized = (rawType || '').toLowerCase().replace(/^image\//, '').replace('jpeg', 'jpg');
@@ -100,42 +118,53 @@ export function getStepReportImages(stepResult: StepResult): StepReportImage[] {
 }
 
 export function getStepEvidenceSlots(stepResult: StepResult, stepDefinition?: InspectionStep): StepReportImage[] {
-  const slots: StepReportImage[] = [];
-  const seenLabels = new Set<string>();
+  const slots: Array<StepReportImage & { key: string }> = [];
   const seenUrls = new Set<string>();
-  const addSlot = (label: string | undefined, url?: string) => {
+  const addSlot = (key: string, label: string | undefined, url?: string) => {
     const trimmedLabel = label?.trim() || stepResult.stepId;
     const trimmedUrl = url?.trim();
-    if (trimmedUrl && seenUrls.has(trimmedUrl)) return;
-    const key = `${trimmedLabel}::${trimmedUrl || ''}`;
-    if (seenLabels.has(key)) return;
-    seenLabels.add(key);
+    const existing = slots.find((slot) => slot.key === key);
+    if (trimmedUrl && seenUrls.has(trimmedUrl) && existing?.url !== trimmedUrl) return;
+    if (existing) {
+      if (trimmedUrl && !existing.url) {
+        existing.url = trimmedUrl;
+        seenUrls.add(trimmedUrl);
+      }
+      return;
+    }
     if (trimmedUrl) seenUrls.add(trimmedUrl);
-    slots.push({ label: trimmedLabel, url: trimmedUrl || undefined });
+    slots.push({ key, label: trimmedLabel, url: trimmedUrl || undefined });
   };
 
-  stepResult.photoSlotsData?.forEach((slot) => {
-    addSlot(slot.label || `Slot ${slot.slotIndex}`, slot.photoUrl);
-  });
-
-  if (slots.length === 0) {
-    stepDefinition?.photoSlotConfigs?.forEach((slot) => {
-      addSlot(slot.label || `Slot ${slot.slotIndex}`);
+  if (stepDefinition?.photoSlotConfigs?.length) {
+    stepDefinition.photoSlotConfigs.forEach((slot) => {
+      addSlot(`slot:${slot.slotIndex}`, slot.label || `Slot ${slot.slotIndex}`);
     });
+  } else if (stepDefinition?.photoSlots?.length) {
     stepDefinition?.photoSlots?.forEach((slot, index) => {
-      addSlot(slot || `Slot ${index + 1}`);
+      addSlot(`slot:${index + 1}`, slot || `Slot ${index + 1}`);
     });
+  } else {
+    const count = stepDefinition?.requiredPhotoCount || 0;
+    for (let index = 1; index <= count; index += 1) addSlot(`slot:${index}`, `Slot ${index}`);
   }
 
+  stepResult.photoSlotsData?.forEach((slot) => {
+    addSlot(`slot:${slot.slotIndex}`, slot.label || `Slot ${slot.slotIndex}`, slot.photoUrl);
+  });
+
   stepResult.photos?.forEach((photo) => {
-    addSlot(photo.slotName, photo.url);
+    const label = photo.slotName?.trim();
+    const matchingSlot = label ? slots.find((slot) => slot.label.trim().toLowerCase() === label.toLowerCase()) : undefined;
+    addSlot(matchingSlot?.key || `photo:${label || photo.url}`, photo.slotName, photo.url);
   });
 
   if (stepResult.photoUrl && !seenUrls.has(stepResult.photoUrl.trim())) {
-    addSlot(stepResult.stepId, stepResult.photoUrl);
+    const firstEmptySlot = slots.find((slot) => !slot.url);
+    addSlot(firstEmptySlot?.key || 'photo:primary', firstEmptySlot?.label || stepResult.stepId, stepResult.photoUrl);
   }
 
-  return slots;
+  return slots.map(({ key, ...slot }) => slot);
 }
 
 export function getStepApprovalDisplay(stepResult: StepResult) {
@@ -449,15 +478,15 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
       overlay.updateMessage(`Đang tải & xử lý hình ảnh bước ${stepIndex}/${totalSteps}...`);
       const stepDef = matchedTemplate?.steps.find((step) => step.stepId === sr.stepId);
       const reportImages = getStepEvidenceSlots(sr, stepDef);
-      stepImagesMap[sr.stepId] = [];
-      for (const image of reportImages) {
+      const preparedImages = await mapWithConcurrency(reportImages, IMAGE_FETCH_CONCURRENCY, async (image) => {
         const preparedImage = image.url ? await fetchImageForDocx(exportJob.id, image.url, getImageTypeFromUrl(image.url)) : null;
-        stepImagesMap[sr.stepId].push({
+        return {
           label: image.label,
           type: preparedImage?.type || null,
           data: preparedImage?.data || null,
-        });
-      }
+        };
+      });
+      stepImagesMap[sr.stepId] = preparedImages;
     }
 
     overlay.updateMessage('Đang tổng hợp các bảng thông số & kết cấu văn bản Word...');

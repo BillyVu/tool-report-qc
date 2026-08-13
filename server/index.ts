@@ -200,6 +200,7 @@ async function getAdminJobDetailByExternalId(externalId: string) {
                 ) AS evidence_photos
            FROM evidence_photos ep
           WHERE ep.job_id = j.id
+            AND ep.ai_quality_status IS DISTINCT FROM 'REJECTED'
        ) p ON true
       WHERE j.external_id = $1`,
     [externalId],
@@ -214,6 +215,28 @@ async function getAdminJobDetailByExternalId(externalId: string) {
     otherInfoData: row.other_info_data || row.template_snapshot?.otherInfoData || {},
     evidence_photos: undefined,
   };
+}
+
+function requiredPhotoCountForStep(templateStep: any): number {
+  return Number(
+    templateStep?.requiredPhotoCount
+    ?? (Array.isArray(templateStep?.photoSlotConfigs) ? templateStep.photoSlotConfigs.length : undefined)
+    ?? (Array.isArray(templateStep?.photoSlots) ? templateStep.photoSlots.length : undefined)
+    ?? 0,
+  );
+}
+
+function stepResultPhotoCount(resultStep: any): number {
+  if (Array.isArray(resultStep?.photoSlotsData)) {
+    return resultStep.photoSlotsData.filter((slot: any) => Boolean(slot?.photoUrl)).length;
+  }
+  return resultStep?.photoUrl ? 1 : 0;
+}
+
+async function hydratedAdminJobResponse(res: Response, externalId: string) {
+  const hydrated = await getAdminJobDetailByExternalId(externalId);
+  if (!hydrated) return res.status(404).json({ error: 'Job not found.' });
+  return res.json(hydrated);
 }
 
 async function workerSessionGuard(req: Request, res: Response, next: NextFunction) {
@@ -491,7 +514,7 @@ app.delete('/api/admin/photo-types/:type', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
-  const { externalId, batchNumber, productCode, productName, templateId, templateSnapshot, workerId, workerName, shift, line, defectsFindingData, packagingInfoData, otherInfoData } = req.body;
+  const { externalId, batchNumber, productCode, productName, templateId, templateSnapshot, workerId, workerName, shift, line, adminNotes, notes, defectsFindingData, packagingInfoData, otherInfoData } = req.body;
   if (![externalId, batchNumber, productCode, productName, templateSnapshot].every(Boolean)) {
     return res.status(400).json({ error: 'externalId, batchNumber, productCode, productName, and templateSnapshot are required.' });
   }
@@ -499,10 +522,11 @@ app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
   const initialDefects = defectsFindingData || templateSnapshot?.defectsFindingData || [];
   const initialPackaging = packagingInfoData || templateSnapshot?.packagingInfoData || {};
   const initialOther = otherInfoData || templateSnapshot?.otherInfoData || {};
+  const initialAdminNotes = String(adminNotes ?? notes ?? '').trim() || null;
 
   const job = await db.query(
-    `INSERT INTO inspection_jobs (external_id, batch_number, product_code, product_name, template_id, template_snapshot, step_results, worker_id, worker_name, shift, line, defects_finding_data, packaging_info_data, other_info_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+    `INSERT INTO inspection_jobs (external_id, batch_number, product_code, product_name, template_id, template_snapshot, step_results, worker_id, worker_name, shift, line, defects_finding_data, packaging_info_data, other_info_data, admin_notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
     [
       externalId,
       batchNumber,
@@ -518,6 +542,7 @@ app.post('/api/admin/jobs', requireAdmin, async (req, res) => {
       toJsonbParam(initialDefects),
       toJsonbParam(initialPackaging),
       toJsonbParam(initialOther),
+      initialAdminNotes,
     ],
   );
   await db.query(`INSERT INTO audit_events (job_id, actor_type, actor_label, action) VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_CREATED')`, [job.rows[0].id]);
@@ -615,6 +640,7 @@ app.get('/api/admin/jobs', requireAdmin, async (_req, res) => {
                 ) AS evidence_photos
            FROM evidence_photos ep
           WHERE ep.job_id = j.id
+            AND ep.ai_quality_status IS DISTINCT FROM 'REJECTED'
        ) p ON true
       ORDER BY j.created_at DESC`,
   );
@@ -644,9 +670,9 @@ app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
           ORDER BY created_at DESC
           LIMIT 1
        ) s ON true
-       LEFT JOIN LATERAL (
-         SELECT jsonb_agg(
-                  jsonb_build_object(
+        LEFT JOIN LATERAL (
+          SELECT jsonb_agg(
+                   jsonb_build_object(
                     'stepId', ep.step_id,
                     'slotIndex', ep.slot_index,
                     'photoUrl', '/uploads/' || ep.storage_path,
@@ -657,6 +683,7 @@ app.get('/api/admin/jobs/:jobId', requireAdmin, async (req, res) => {
                 ) AS evidence_photos
            FROM evidence_photos ep
           WHERE ep.job_id = j.id
+            AND ep.ai_quality_status IS DISTINCT FROM 'REJECTED'
        ) p ON true
       WHERE j.external_id = $1`,
     [req.params.jobId],
@@ -922,7 +949,23 @@ app.patch('/api/admin/jobs/:jobId/status', requireAdmin, async (req, res) => {
      VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STATUS_UPDATED', $2)`,
     [result.rows[0].id, toJsonbParam({ fieldChanged: 'Status', oldValue: previous.rows[0].status, newValue: status, oldAdminNotes: previous.rows[0].admin_notes || '', adminNotes })],
   );
-  res.json(result.rows[0]);
+  return hydratedAdminJobResponse(res, req.params.jobId);
+});
+
+app.patch('/api/admin/jobs/:jobId/admin-notes', requireAdmin, async (req, res) => {
+  const adminNotes = String(req.body?.adminNotes ?? '');
+  const previous = await db.query(`SELECT id, admin_notes FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
+  if (!previous.rowCount) return res.status(404).json({ error: 'Job not found.' });
+  await db.query(
+    `UPDATE inspection_jobs SET admin_notes = $2, updated_at = now() WHERE external_id = $1`,
+    [req.params.jobId, adminNotes || null],
+  );
+  await db.query(
+    `INSERT INTO audit_events (job_id, actor_type, actor_label, action, payload)
+     VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_ADMIN_NOTES_UPDATED', $2)`,
+    [previous.rows[0].id, toJsonbParam({ fieldChanged: 'Admin Notes', oldValue: previous.rows[0].admin_notes || '', newValue: adminNotes })],
+  );
+  return hydratedAdminJobResponse(res, req.params.jobId);
 });
 
 app.patch('/api/admin/jobs/:jobId/step-results/:stepId/note', requireAdmin, async (req, res) => {
@@ -930,7 +973,7 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/note', requireAdmin, asyn
   const job = await db.query(`SELECT id, step_results FROM inspection_jobs WHERE external_id = $1`, [req.params.jobId]);
   if (!job.rowCount) return res.status(404).json({ error: 'Job not found.' });
   let oldValue = '';
-  const { found, row } = await applyStepResultsUpdate(job.rows[0].id, (currentStepResults) => {
+  const { found } = await applyStepResultsUpdate(job.rows[0].id, (currentStepResults) => {
     const stepResults = Array.isArray(currentStepResults) ? currentStepResults : [];
     let localFound = false;
     const updatedSteps = stepResults.map((step) => {
@@ -947,7 +990,7 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/note', requireAdmin, asyn
      VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_STEP_NOTE_UPDATED', $2)`,
     [job.rows[0].id, toJsonbParam({ fieldChanged: `Step ${req.params.stepId} Note`, oldValue, newValue: note })],
   );
-  res.json(row);
+  return hydratedAdminJobResponse(res, req.params.jobId);
 });
 
 app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin, async (req, res) => {
@@ -963,20 +1006,27 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin
     const templateStep = Array.isArray(job.rows[0].template_snapshot?.steps)
       ? job.rows[0].template_snapshot.steps.find((step: any) => step?.stepId === req.params.stepId)
       : undefined;
-    const requiredPhotoCount = Number(templateStep?.requiredPhotoCount ?? templateStep?.photoSlots?.length ?? 0);
+    const requiredPhotoCount = requiredPhotoCountForStep(templateStep);
     const resultStep = Array.isArray(job.rows[0].step_results)
       ? job.rows[0].step_results.find((step: any) => step?.stepId === req.params.stepId)
       : undefined;
-    const actualPhotoCount = Array.isArray(resultStep?.photoSlotsData)
-      ? resultStep.photoSlotsData.filter((slot: any) => Boolean(slot?.photoUrl)).length
-      : resultStep?.photoUrl ? 1 : 0;
+    const photoCounts = await db.query(
+      `SELECT COUNT(*)::int AS total_count,
+              COUNT(DISTINCT slot_index) FILTER (WHERE ai_quality_status IS DISTINCT FROM 'REJECTED')::int AS accepted_count
+         FROM evidence_photos
+        WHERE job_id = $1 AND step_id = $2`,
+      [job.rows[0].id, req.params.stepId],
+    );
+    const actualPhotoCount = Number(photoCounts.rows[0]?.total_count || 0) > 0
+      ? Number(photoCounts.rows[0]?.accepted_count || 0)
+      : stepResultPhotoCount(resultStep);
     if (actualPhotoCount < requiredPhotoCount) {
       return res.status(409).json({ error: `Cần đủ ${requiredPhotoCount} ảnh bằng chứng trước khi duyệt bước này.` });
     }
   }
 
   let previousStatus = '';
-  const { found, row } = await applyStepResultsUpdate(job.rows[0].id, (currentStepResults) => {
+  const { found } = await applyStepResultsUpdate(job.rows[0].id, (currentStepResults) => {
     const result = moderateStepResults(
       currentStepResults,
       req.params.stepId,
@@ -1001,7 +1051,7 @@ app.patch('/api/admin/jobs/:jobId/step-results/:stepId/moderation', requireAdmin
       }),
     ],
   );
-  res.json(row);
+  return hydratedAdminJobResponse(res, req.params.jobId);
 });
 
 app.post('/api/admin/jobs/:jobId/exports', requireAdmin, async (req, res) => {
@@ -1020,7 +1070,7 @@ app.post('/api/admin/jobs/:jobId/exports', requireAdmin, async (req, res) => {
      VALUES ($1, 'ADMIN', 'QC Admin', 'JOB_EXPORTED', $2)`,
     [result.rows[0].id, toJsonbParam({ format: req.body?.format || 'docx' })],
   );
-  res.json(result.rows[0]);
+  return hydratedAdminJobResponse(res, req.params.jobId);
 });
 
 app.post('/api/admin/jobs/:jobId/sessions', requireAdmin, async (req, res) => {

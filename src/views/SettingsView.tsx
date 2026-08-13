@@ -41,6 +41,9 @@ const EMPTY_PHOTO_TYPE_FORM: SavePhotoTypePayload = {
   sortOrder: 999,
 };
 
+const DEFAULT_OUTPUT_SCHEMA = { type: 'object', required: [], properties: {} };
+const formatOutputSchema = (schema: unknown) => JSON.stringify(schema || DEFAULT_OUTPUT_SCHEMA, null, 2);
+
 export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => {
   const [factoryName, setFactoryName] = useState('NHÀ MÁY SẢN XUẤT ĐIỆN TỬ & THIẾT BỊ THÔNG MINH');
   const [department, setDepartment] = useState('BỘ PHẬN PHÁT TRIỂN & QUẢN LÝ CHẤT LƯỢNG (QA/QC)');
@@ -60,6 +63,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
   const [isPhotoTypeEditorOpen, setIsPhotoTypeEditorOpen] = useState(false);
   const [editingType, setEditingType] = useState<string | null>(null);
   const [draft, setDraft] = useState<SavePhotoTypePayload>(EMPTY_PHOTO_TYPE_FORM);
+  const [outputSchemaText, setOutputSchemaText] = useState(formatOutputSchema(EMPTY_PHOTO_TYPE_FORM.outputSchema));
   const [isSavingPhotoType, setIsSavingPhotoType] = useState(false);
   const [veroProfiles, setVeroProfiles] = useState<VeroPromptProfile[]>([]);
   const [veroDrafts, setVeroDrafts] = useState<Record<string, string>>({});
@@ -168,32 +172,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
   const startCreatePhotoType = () => {
     setEditingType(null);
     setIsPhotoTypeEditorOpen(true);
-    setDraft({
+    const nextDraft = {
       ...EMPTY_PHOTO_TYPE_FORM,
       sortOrder: photoTypes.length ? Math.max(...photoTypes.map((item) => item.sortOrder || 0)) + 10 : 10,
-    });
+    };
+    setDraft(nextDraft);
+    setOutputSchemaText(formatOutputSchema(nextDraft.outputSchema));
   };
 
   const startEditPhotoType = (item: PhotoTypeOption) => {
     setEditingType(item.type);
     setIsPhotoTypeEditorOpen(true);
-    setDraft({
+    const nextDraft = {
       label: item.label,
       category: item.category,
       iconEmoji: item.iconEmoji,
       verificationMode: item.verificationMode || 'EVIDENCE_ONLY',
       schemaVersion: item.schemaVersion || '1.0',
-      outputSchema: item.outputSchema || { type: 'object', required: [], properties: {} },
+      outputSchema: item.outputSchema || DEFAULT_OUTPUT_SCHEMA,
       aiPromptInstruction: item.aiPromptInstruction,
       isActive: item.isActive ?? true,
       sortOrder: item.sortOrder ?? 999,
-    });
+    };
+    setDraft(nextDraft);
+    setOutputSchemaText(formatOutputSchema(nextDraft.outputSchema));
   };
 
   const closePhotoTypeEditor = () => {
     setIsPhotoTypeEditorOpen(false);
     setEditingType(null);
     setDraft(EMPTY_PHOTO_TYPE_FORM);
+    setOutputSchemaText(formatOutputSchema(EMPTY_PHOTO_TYPE_FORM.outputSchema));
   };
 
   const handleSavePhotoType = async (e: React.FormEvent) => {
@@ -201,15 +210,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
     setIsSavingPhotoType(true);
     setPhotoTypeError('');
     try {
+      const parsedSchema = JSON.parse(outputSchemaText);
+      const payload = { ...draft, outputSchema: parsedSchema };
       if (editingType) {
-        await adminApi.updatePhotoType(editingType, draft);
+        await adminApi.updatePhotoType(editingType, payload);
       } else {
-        await adminApi.createPhotoType(draft);
+        await adminApi.createPhotoType(payload);
       }
       closePhotoTypeEditor();
       await reloadPhotoTypes();
     } catch (error) {
-      setPhotoTypeError(error instanceof Error ? error.message : 'Không lưu được loại ảnh.');
+      setPhotoTypeError(error instanceof SyntaxError ? 'Output schema phải là JSON hợp lệ.' : error instanceof Error ? error.message : 'Không lưu được loại ảnh.');
     } finally {
       setIsSavingPhotoType(false);
     }
@@ -612,15 +623,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onAuthUpdated }) => 
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">Output schema JSON</label>
                 <textarea
-                  value={JSON.stringify(draft.outputSchema || { type: 'object', required: [], properties: {} }, null, 2)}
+                  value={outputSchemaText}
                   onChange={(e) => {
-                    try {
-                      const parsed = JSON.parse(e.target.value);
-                      setDraft((prev) => ({ ...prev, outputSchema: parsed }));
-                      setPhotoTypeError('');
-                    } catch {
-                      setPhotoTypeError('Output schema phải là JSON hợp lệ.');
-                    }
+                    setOutputSchemaText(e.target.value);
+                    setPhotoTypeError('');
                   }}
                   rows={5}
                   className="w-full p-2.5 font-mono text-[11px] bg-white border border-slate-300 rounded-lg resize-y"

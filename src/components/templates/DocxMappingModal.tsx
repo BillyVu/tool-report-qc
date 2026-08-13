@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FileCode, FileText, Check, X, Sliders, Upload, Image as ImageIcon, Sparkles } from 'lucide-react';
 import { InspectionStep, DocxMapping } from '../../types/qc';
 import { validateDocxMapping } from '../../utils/docxMapping';
@@ -20,14 +20,25 @@ export const DocxMappingModal: React.FC<DocxMappingModalProps> = ({
   docxTemplateName,
   onSaveMapping
 }) => {
-  if (!isOpen || !step) return null;
-
-  const [imageTag, setImageTag] = useState(step.mapping?.imageTag || `{{photo_${step.stepId.toLowerCase()}}}`);
-  const [noteTag, setNoteTag] = useState(step.mapping?.noteTag || `{{note_${step.stepId.toLowerCase()}}}`);
-  const [statusTag, setStatusTag] = useState(step.mapping?.statusTag || `{{status_${step.stepId.toLowerCase()}}}`);
-  const [imageWidthMm, setImageWidthMm] = useState(step.mapping?.imageWidthMm || 60);
-  const [imageHeightMm, setImageHeightMm] = useState(step.mapping?.imageHeightMm || 45);
+  const [imageTag, setImageTag] = useState('');
+  const [noteTag, setNoteTag] = useState('');
+  const [statusTag, setStatusTag] = useState('');
+  const [imageWidthMm, setImageWidthMm] = useState(60);
+  const [imageHeightMm, setImageHeightMm] = useState(45);
   const [errors, setErrors] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!isOpen || !step) return;
+    const tagSuffix = step.stepId.toLowerCase();
+    setImageTag(step.mapping?.imageTag || `{{photo_${tagSuffix}}}`);
+    setNoteTag(step.mapping?.noteTag || `{{note_${tagSuffix}}}`);
+    setStatusTag(step.mapping?.statusTag || `{{status_${tagSuffix}}}`);
+    setImageWidthMm(step.mapping?.imageWidthMm || 60);
+    setImageHeightMm(step.mapping?.imageHeightMm || 45);
+    setErrors([]);
+  }, [isOpen, step]);
+
+  if (!isOpen || !step) return null;
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();

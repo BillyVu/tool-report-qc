@@ -23,6 +23,14 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   if (!isOpen) return null;
 
   const isEdit = !!template;
+  const [newTemplateId] = useState(() => {
+    const base = (template?.productCode || 'QC_TEMPLATE')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'QC_TEMPLATE';
+    return template?.id || `${base}_${Date.now()}`;
+  });
   const [activeTab, setActiveTab] = useState<'BASIC' | 'STEPS' | 'DEFECTS' | 'PACKAGING' | 'OTHER'>('BASIC');
 
   const [title, setTitle] = useState(template?.title || '');
@@ -111,7 +119,7 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   }, []);
 
   const currentPreviewData: ChecklistTemplate = {
-    id: template?.id || 'PREVIEW_TEMP',
+    id: template?.id || newTemplateId,
     title: title || 'Mẫu QC Chưa Đặt Tên',
     productCode: productCode || 'PHONE_GENERIC',
     productName: productName || title,
@@ -158,7 +166,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   };
 
   const handleAddStep = () => {
-    const newStepIndex = steps.length + 1;
+    const usedNumbers = steps
+      .map((step) => /^STEP_(\d+)$/i.exec(step.stepId)?.[1])
+      .filter(Boolean)
+      .map(Number);
+    const newStepIndex = Math.max(0, ...usedNumbers) + 1;
     const newStep: InspectionStep = {
       stepId: `STEP_${newStepIndex}`,
       title: `Bước ${newStepIndex}: Kiểm tra quy trình`,
@@ -293,6 +305,11 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
   const handleFormSubmit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (!title.trim() || !productCode.trim()) return;
+    const mappingErrors = validateTemplateMappings(steps);
+    if (mappingErrors.length) {
+      setSaveError(mappingErrors.join(' '));
+      return;
+    }
     setIsSaving(true);
     try {
       await onSave(currentPreviewData);

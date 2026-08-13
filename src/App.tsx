@@ -105,6 +105,7 @@ export default function App() {
       activeTab={activeTab}
       setActiveTab={setActiveTab}
       onLogout={handleLogout}
+      onJobCreated={setSelectedJobForReview}
     >
       {activeTab === 'dashboard' && (
         <DashboardView

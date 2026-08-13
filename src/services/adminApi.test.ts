@@ -345,6 +345,7 @@ test('manages photo type options through the admin API', async () => {
   };
   const api = createAdminApi({
     adminKey: 'secret',
+    baseUrl: '',
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       return new Response(JSON.stringify(init?.method === 'POST' || init?.method === 'PATCH' ? photoType : [photoType]), {

@@ -137,6 +137,7 @@ export const CreateInspectionJobModal: React.FC<CreateInspectionJobModalProps> =
           workerName: workerName.trim() || 'Công nhân QC',
           line,
           shift,
+          adminNotes: notes.trim(),
           defectsFindingData: selectedTemplate.defectsFindingData || [],
           packagingInfoData: selectedTemplate.packagingInfoData || {},
           otherInfoData: selectedTemplate.otherInfoData || {},

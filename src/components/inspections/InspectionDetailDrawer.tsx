@@ -154,8 +154,8 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
   const activeStepIndex = currentJob?.stepResults.findIndex((step) => step.stepId === activeStepId) ?? -1;
   const activeStep = activeStepIndex >= 0 ? currentJob?.stepResults[activeStepIndex] : currentJob?.stepResults[0];
   const activeStepDef = activeStep ? template?.steps.find((step) => step.stepId === activeStep.stepId) : undefined;
-  const activePhotoSlots = activeStepDef?.photoSlots || (activeStep?.photos ? activeStep.photos.map((photo) => photo.slotName) : []);
-  const activeRequiredPhotoCount = activeStepDef?.requiredPhotoCount ?? (activePhotoSlots.length || 1);
+  const activePhotoSlots = activeStepDef?.photoSlots || activeStepDef?.photoSlotConfigs?.map((slot) => slot.label) || (activeStep?.photos ? activeStep.photos.map((photo) => photo.slotName) : []);
+  const activeRequiredPhotoCount = activeStepDef?.requiredPhotoCount ?? activeStepDef?.photoSlotConfigs?.length ?? (activePhotoSlots.length || 1);
   const activePhotoCount = activeStep ? getPhotoCount(activeStep) : 0;
   const activeModerationStatus = activeStep?.moderationStatus || 'PENDING_REVIEW';
   const activePhotos = activeStep?.photos?.length
@@ -199,7 +199,7 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
   const handleSaveAdminNotes = async () => {
     setIsSavingAdminNotes(true);
     try {
-      const updated = await adminApi.updateJobStatus(currentJob.id, currentJob.status, adminNotes);
+      const updated = await adminApi.updateJobAdminNotes(currentJob.id, adminNotes);
       setCurrentJob(updated);
       onJobUpdated();
     } finally {
@@ -907,8 +907,8 @@ export const InspectionDetailDrawer: React.FC<InspectionDetailDrawerProps> = ({
                 <button
                   type="button"
                   onClick={() => handleModerateStep(activeStep.stepId, 'REJECTED')}
-                  disabled={reviewingStepId === activeStep.stepId || activePhotoCount < activeRequiredPhotoCount}
-                  title={activePhotoCount < activeRequiredPhotoCount ? `Cần đủ ${activeRequiredPhotoCount} ảnh bằng chứng trước khi duyệt.` : 'Duyệt bước này'}
+                  disabled={reviewingStepId === activeStep.stepId}
+                  title="Từ chối bước này"
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 text-xs font-bold text-white shadow-sm hover:bg-red-500 disabled:opacity-60"
                 >
                   {reviewingStepId === activeStep.stepId ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}

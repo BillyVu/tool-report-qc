@@ -8,6 +8,7 @@ import {
   normToDisplay,
   quadTriangles,
   rectForAspect,
+  resizeAspectRect,
   rotatedDims,
 } from './photoTransform';
 
@@ -65,6 +66,46 @@ test('quadTriangles splits a quad into two matching triangles', () => {
   assert.deepEqual(t1[2], quad.br);
   assert.deepEqual(t2[1], quad.br);
   assert.deepEqual(t2[2], quad.bl);
+});
+
+test('resizeAspectRect keeps the rect inside the image and preserves aspect', () => {
+  const start = rectForAspect(4 / 3, 4 / 3); // { x:0, y:0, w:1, h:1 }
+  const handles = ['tl', 'tr', 'br', 'bl', 'top', 'right', 'bottom', 'left'] as const;
+  for (const handle of handles) {
+    const next = resizeAspectRect(start, handle, { x: 0.25, y: 0.25 });
+    assert.ok(next.x >= 0 && next.y >= 0, `${handle} x/y >= 0`);
+    assert.ok(next.x + next.w <= 1 + 1e-9 && next.y + next.h <= 1 + 1e-9, `${handle} stays in bounds`);
+    assert.ok(Math.abs(next.w / next.h - start.w / start.h) < 1e-9, `${handle} preserves aspect`);
+  }
+});
+
+test('resizeAspectRect clamps oversized growth back into the image', () => {
+  // 4:3 crop frame on a 16:9 image starts height-limited: w=1, h=0.75.
+  const start = rectForAspect(16 / 9, 4 / 3);
+  // Dragging the bottom-right corner far past the corner must not overflow.
+  const next = resizeAspectRect(start, 'br', { x: 5, y: 5 });
+  assert.ok(next.x >= 0 && next.y >= 0, 'x/y not negative');
+  assert.ok(next.x + next.w <= 1 + 1e-9, 'right edge within image');
+  assert.ok(next.y + next.h <= 1 + 1e-9, 'bottom edge within image');
+  assert.ok(Math.abs(next.w / next.h - start.w / start.h) < 1e-9, 'aspect preserved');
+  assert.equal(next.x, start.x);
+  assert.equal(next.y, start.y);
+});
+
+test('resizeAspectRect anchors the opposite corner while dragging a corner', () => {
+  const start = { x: 0.2, y: 0.2, w: 0.4, h: 0.4 };
+  const next = resizeAspectRect(start, 'br', { x: 0.9, y: 0.7 });
+  assert.ok(Math.abs(next.x - start.x) < 1e-9, 'tl stays fixed for br drag');
+  assert.ok(Math.abs(next.y - start.y) < 1e-9, 'tl stays fixed for br drag');
+  assert.ok(Math.abs(next.w / next.h - 1) < 1e-9, 'square aspect preserved');
+});
+
+test('resizeAspectRect edge drag keeps the opposite edge fixed and in bounds', () => {
+  const start = rectForAspect(16 / 9, 4 / 3); // x:0, y:0.125, w:1, h:0.75
+  const next = resizeAspectRect(start, 'bottom', { x: 1, y: 1 });
+  assert.ok(next.y >= 0 && next.y + next.h <= 1 + 1e-9, 'bottom edge inside image');
+  assert.ok(Math.abs(next.x - start.x) < 1e-9, 'top-left x fixed for bottom drag');
+  assert.ok(Math.abs(next.w / next.h - start.w / start.h) < 1e-9, 'aspect preserved');
 });
 
 test('rotatedDims grows to the rotated bounding box', () => {

@@ -104,6 +104,41 @@ test('docx export keeps evidence aligned to each expected test slot', () => {
   ]);
 });
 
+test('docx export keeps empty placeholders for configured slots and fills submitted photoSlotConfigs by slot index', () => {
+  const step: InspectionStep = {
+    stepId: 'STEP_2',
+    title: 'IMEI Verification',
+    requiredPhotoCount: 2,
+    photoSlotConfigs: [
+      { slotIndex: 1, label: 'IMEI tem', photoType: 'IMEI_LABEL', captureFrame: 'RECTANGLE' },
+      { slotIndex: 2, label: 'IMEI màn hình', photoType: 'IMEI_SCREEN', captureFrame: 'RECTANGLE' },
+    ],
+    referenceImageUrl: '',
+    isPhotoRequired: true,
+    passCriteria: 'OK',
+    mapping: {
+      imageTag: '{{photo_imei}}',
+      noteTag: '{{note_imei}}',
+      statusTag: '{{status_imei}}',
+      imageWidthMm: 60,
+      imageHeightMm: 45,
+    },
+  };
+  const result: StepResult = {
+    stepId: 'STEP_2',
+    status: 'PASS',
+    note: '',
+    photoSlotsData: [
+      { slotIndex: 2, label: 'IMEI màn hình', photoUrl: '/uploads/screen.png' },
+    ],
+  };
+
+  assert.deepEqual(getStepEvidenceSlots(result, step), [
+    { label: 'IMEI tem', url: undefined },
+    { label: 'IMEI màn hình', url: '/uploads/screen.png' },
+  ]);
+});
+
 test('docx export routes submitted upload photos through the admin evidence endpoint', () => {
   (globalThis as unknown as { window: { location: { origin: string } } }).window = {
     location: { origin: 'https://qc.apexdev.website' },

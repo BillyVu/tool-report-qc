@@ -8,6 +8,7 @@ import { OoxmlImageWriter } from './ooxmlImage.js';
 import { normalizeReportImage, type ReportImageBox } from './reportImage.js';
 
 const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const DRAWINGML_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 
 const X530_TEMPLATE_NAME = 'X530 Knobs_Inspection Report 100-70-260722-117pcs_ATT.docx';
 
@@ -179,6 +180,35 @@ function replaceTextAcrossRuns(xml: string, replacements: Record<string, string>
   const document = new DOMParser().parseFromString(xml, 'application/xml');
   replaceTextInElement(document, replacements);
   return new XMLSerializer().serializeToString(document);
+}
+
+function removeImageDrawingsForMediaTargets(documentDom: any, relsDom: any, mediaTargets: string[]): void {
+  if (!mediaTargets.length) return;
+  const normalizedTargets = new Set(mediaTargets.map((target) => `media/${basename(target)}`));
+  const relationshipIds = new Set<string>();
+  const relationships = relsDom.getElementsByTagName('Relationship');
+  for (let index = 0; index < relationships.length; index += 1) {
+    const relationship = relationships.item(index);
+    const target = relationship?.getAttribute('Target') || '';
+    if (normalizedTargets.has(target.replace(/^\.\//, ''))) {
+      const id = relationship.getAttribute('Id');
+      if (id) relationshipIds.add(id);
+    }
+  }
+  if (!relationshipIds.size) return;
+
+  const blips = documentDom.getElementsByTagNameNS(DRAWINGML_NS, 'blip');
+  const drawingsToRemove: any[] = [];
+  for (let index = 0; index < blips.length; index += 1) {
+    const blip = blips.item(index);
+    const relationshipId = blip?.getAttribute('r:embed') || blip?.getAttribute('embed') || '';
+    if (!relationshipIds.has(relationshipId)) continue;
+    let cursor = blip.parentNode;
+    while (cursor && cursor.localName !== 'drawing') cursor = cursor.parentNode;
+    if (cursor?.parentNode && !drawingsToRemove.includes(cursor)) drawingsToRemove.push(cursor);
+  }
+
+  drawingsToRemove.forEach((drawing) => drawing.parentNode?.removeChild(drawing));
 }
 
 function reportDate(value: string | Date) {
@@ -977,11 +1007,12 @@ export async function buildX530CustomerReport(options: {
     }
 
     const staticDocXml = zip.file('word/document.xml');
-    if (staticDocXml) {
-      const staticDom = new DOMParser().parseFromString(staticDocXml.asText(), 'application/xml');
+    const staticDom = staticDocXml ? new DOMParser().parseFromString(staticDocXml.asText(), 'application/xml') : null;
+    const staticRelsFile = zip.file('word/_rels/document.xml.rels');
+    const staticRelsDom = staticRelsFile ? new DOMParser().parseFromString(staticRelsFile.asText(), 'application/xml') : null;
+    if (staticDom) {
       await populateDefectsTable(staticDom, undefined, defects, undefined);
       populatePackagingTables(staticDom, options.job);
-      zip.file('word/document.xml', new XMLSerializer().serializeToString(staticDom));
     }
 
     const blankEvidenceImage = await sharp({
@@ -991,6 +1022,7 @@ export async function buildX530CustomerReport(options: {
       if (zip.file(target)) zip.file(target, blankEvidenceImage, { compression: 'STORE' });
     });
 
+    const filledTargets = new Set<string>();
     for (const [stepKey, targets] of Object.entries(X530_STEP_IMAGE_TARGETS)) {
       const stepIndex = parseInt(stepKey.replace('STEP_', ''), 10) - 1;
       const sr = options.job.stepResults?.[stepIndex];
@@ -1011,11 +1043,20 @@ export async function buildX530CustomerReport(options: {
           const aspect = getSlotAspectRatio(stepIdToMatch, stepIndex, targetIndex);
           const png = await processImageWithContainFit(source, aspect);
           zip.file(targets[targetIndex], png, { compression: 'STORE' });
+          filledTargets.add(targets[targetIndex]);
         } catch (err) {
           console.warn(`Could not process static photo for step ${stepIdToMatch} slot index ${targetIndex}:`, err);
           zip.file(targets[targetIndex], blankEvidenceImage, { compression: 'STORE' });
         }
       }
+    }
+
+    if (staticDom && staticRelsDom) {
+      const missingTargets = X530_ALL_EVIDENCE_TARGETS.filter((target) => !filledTargets.has(target));
+      removeImageDrawingsForMediaTargets(staticDom, staticRelsDom, missingTargets);
+      zip.file('word/document.xml', new XMLSerializer().serializeToString(staticDom));
+    } else if (staticDom) {
+      zip.file('word/document.xml', new XMLSerializer().serializeToString(staticDom));
     }
   }
 

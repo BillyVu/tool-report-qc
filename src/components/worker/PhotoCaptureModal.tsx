@@ -10,6 +10,7 @@ import {
   Quad,
   rectForAspect,
   RectNorm,
+  resizeAspectRect,
 } from '../../utils/photoTransform';
 import {
   buildWorkCanvas,
@@ -48,14 +49,6 @@ const FREE_EDGE_CORNERS: Record<'top' | 'right' | 'bottom' | 'left', Array<keyof
   bottom: ['bl', 'br'],
   left: ['tl', 'bl'],
 };
-
-function clampRect(r: RectNorm, min = 0.04): RectNorm {
-  const w = Math.max(min, r.w);
-  const h = Math.max(min, r.h);
-  const x = Math.min(1 - w, Math.max(0, r.x));
-  const y = Math.min(1 - h, Math.max(0, r.y));
-  return { x, y, w, h };
-}
 
 export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, initialImageUrl, slotLabel, initialError, onClose, onComplete }: PhotoCaptureModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -316,40 +309,7 @@ export function PhotoCaptureModal({ mode, frame, aspectRatio, selectedFile, init
       const y = Math.min(1 - state.startRect.h, Math.max(0, state.startRect.y + dy));
       setCropRect({ ...state.startRect, x, y });
     } else if (state.kind === 'RECT_CORNER' || state.kind === 'RECT_EDGE') {
-      const r = state.startRect;
-      const aspect = r.w / r.h;
-      const min = 0.04;
-      let next: RectNorm;
-      if (state.kind === 'RECT_CORNER') {
-        let w = state.target === 'tr' || state.target === 'br' ? normPos.x - r.x : r.x + r.w - normPos.x;
-        let h = state.target === 'bl' || state.target === 'br' ? normPos.y - r.y : r.y + r.h - normPos.y;
-        w = Math.max(min, w);
-        h = Math.max(min, h);
-        if (w / h > aspect) h = w / aspect;
-        else w = h * aspect;
-        next = {
-          x: state.target === 'tl' || state.target === 'bl' ? r.x + r.w - w : r.x,
-          y: state.target === 'tl' || state.target === 'tr' ? r.y + r.h - h : r.y,
-          w,
-          h,
-        };
-      } else {
-        // edge: adjust one dimension, keep aspect
-        if (state.target === 'right') {
-          const w = Math.max(min, normPos.x - r.x);
-          next = { x: r.x, y: r.y, w, h: w / aspect };
-        } else if (state.target === 'left') {
-          const w = Math.max(min, r.x + r.w - normPos.x);
-          next = { x: r.x + r.w - w, y: r.y, w, h: w / aspect };
-        } else if (state.target === 'bottom') {
-          const h = Math.max(min, normPos.y - r.y);
-          next = { x: r.x, y: r.y, w: h * aspect, h };
-        } else {
-          const h = Math.max(min, r.y + r.h - normPos.y);
-          next = { x: r.x, y: r.y + r.h - h, w: h * aspect, h };
-        }
-      }
-      setCropRect(clampRect(next, min));
+      setCropRect(resizeAspectRect(state.startRect, state.target, normPos, 0.04));
     }
   };
 

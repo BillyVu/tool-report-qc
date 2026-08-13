@@ -18,6 +18,16 @@ export interface ChecklistTemplatePayload {
   deviceSpec?: string;
   clientName?: string;
   supplierName?: string;
+  supplierLocation?: string;
+  supplierContact?: string;
+  serviceRequired?: string;
+  aqlStandard?: string;
+  inspectionLevel?: string;
+  orderQty?: string;
+  cartonQty?: string;
+  systemVersion?: string;
+  hardwareVersion?: string;
+  buildNumber?: string;
 }
 
 export interface TemplateRow {
@@ -59,6 +69,16 @@ export function serializeTemplateRow(row: TemplateRow): Required<ChecklistTempla
     deviceSpec: (definition as any).deviceSpec || '',
     clientName: (definition as any).clientName || '',
     supplierName: (definition as any).supplierName || '',
+    supplierLocation: (definition as any).supplierLocation || '',
+    supplierContact: (definition as any).supplierContact || '',
+    serviceRequired: (definition as any).serviceRequired || '',
+    aqlStandard: (definition as any).aqlStandard || '',
+    inspectionLevel: (definition as any).inspectionLevel || '',
+    orderQty: (definition as any).orderQty || '',
+    cartonQty: (definition as any).cartonQty || '',
+    systemVersion: (definition as any).systemVersion || '',
+    hardwareVersion: (definition as any).hardwareVersion || '',
+    buildNumber: (definition as any).buildNumber || '',
   };
 }
 
@@ -81,6 +101,16 @@ export function templateDbParams(template: ChecklistTemplatePayload, externalId 
     deviceSpec: (template as any).deviceSpec || '',
     clientName: (template as any).clientName || '',
     supplierName: (template as any).supplierName || '',
+    supplierLocation: (template as any).supplierLocation || '',
+    supplierContact: (template as any).supplierContact || '',
+    serviceRequired: (template as any).serviceRequired || '',
+    aqlStandard: (template as any).aqlStandard || '',
+    inspectionLevel: (template as any).inspectionLevel || '',
+    orderQty: (template as any).orderQty || '',
+    cartonQty: (template as any).cartonQty || '',
+    systemVersion: (template as any).systemVersion || '',
+    hardwareVersion: (template as any).hardwareVersion || '',
+    buildNumber: (template as any).buildNumber || '',
   };
 
   return {

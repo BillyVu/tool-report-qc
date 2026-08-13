@@ -10,7 +10,7 @@ import {
   BookOpen,
   Map
 } from 'lucide-react';
-import { DashboardKPI } from '../types/qc';
+import { DashboardKPI, InspectionJob } from '../types/qc';
 import { adminApi } from '../services/adminApi';
 import { CreateInspectionJobModal } from '../components/inspections/CreateInspectionJobModal';
 import { VeroBrand } from '../components/branding/VeroBrand';
@@ -21,22 +21,28 @@ interface AdminLayoutProps {
   activeTab: 'dashboard' | 'templates' | 'inspections' | 'audit' | 'settings';
   setActiveTab: (tab: 'dashboard' | 'templates' | 'inspections' | 'audit' | 'settings') => void;
   onLogout: () => void;
+  onJobCreated?: (job: InspectionJob) => void;
 }
 
 export const AdminLayout: React.FC<AdminLayoutProps> = ({
   children,
   activeTab,
   setActiveTab,
-  onLogout
+  onLogout,
+  onJobCreated
 }) => {
   const [kpis, setKpis] = useState<DashboardKPI>({ totalJobs: 0, inProgress: 0, completed: 0, failed: 0, passRate: 100, todayCount: 0 });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const startQuickTourRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
+  const refreshKpis = useCallback(() => {
     void adminApi.getKpis().then(setKpis).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    refreshKpis();
+  }, [refreshKpis]);
 
   const navItems = [
     {
@@ -238,6 +244,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
         onClose={() => setIsCreateModalOpen(false)}
         onJobCreated={(newJob) => {
           setActiveTab('inspections');
+          refreshKpis();
+          onJobCreated?.(newJob);
           setToastMessage(`✨ Đã khởi tạo lệnh kiểm tra mới: ${newJob.batchNumber}`);
           setTimeout(() => setToastMessage(null), 4000);
         }}

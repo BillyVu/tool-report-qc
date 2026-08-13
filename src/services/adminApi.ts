@@ -14,6 +14,7 @@ interface CreateJobPayload {
   workerName?: string;
   shift?: string;
   line?: string;
+  adminNotes?: string;
   defectsFindingData?: DefectItem[];
   packagingInfoData?: PackagingInfoData;
   otherInfoData?: OtherInfoData;
@@ -183,19 +184,19 @@ export function createAdminApi(options: AdminApiOptions = {}) {
     },
 
     async listPhotoTypes(): Promise<PhotoTypeOption[]> {
-      return await expectOk(await fetchImpl('/api/admin/photo-types', {
+      return await expectOk(await fetchImpl(apiUrl('/api/admin/photo-types'), {
         headers: headers(),
       })) || [];
     },
 
     async listVeroPromptProfiles(): Promise<VeroPromptProfile[]> {
-      return await expectOk(await fetchImpl('/api/admin/vero-prompt-profiles', {
+      return await expectOk(await fetchImpl(apiUrl('/api/admin/vero-prompt-profiles'), {
         headers: headers(),
       })) || [];
     },
 
     async updateVeroPromptProfile(profileKey: VeroPromptProfile['profileKey'], instruction: string): Promise<VeroPromptProfile> {
-      return await expectOk(await fetchImpl(`/api/admin/vero-prompt-profiles/${encodeURIComponent(profileKey)}`, {
+      return await expectOk(await fetchImpl(apiUrl(`/api/admin/vero-prompt-profiles/${encodeURIComponent(profileKey)}`), {
         method: 'PATCH',
         headers: headers(),
         body: JSON.stringify({ instruction }),
@@ -203,14 +204,14 @@ export function createAdminApi(options: AdminApiOptions = {}) {
     },
 
     async verifyVeroPromptProfile(profileKey: VeroPromptProfile['profileKey']): Promise<VeroPromptProfile> {
-      return await expectOk(await fetchImpl(`/api/admin/vero-prompt-profiles/${encodeURIComponent(profileKey)}/verify`, {
+      return await expectOk(await fetchImpl(apiUrl(`/api/admin/vero-prompt-profiles/${encodeURIComponent(profileKey)}/verify`), {
         method: 'POST',
         headers: headers(),
       }));
     },
 
     async createPhotoType(payload: SavePhotoTypePayload): Promise<PhotoTypeOption> {
-      return await expectOk(await fetchImpl('/api/admin/photo-types', {
+      return await expectOk(await fetchImpl(apiUrl('/api/admin/photo-types'), {
         method: 'POST',
         headers: headers(),
         body: JSON.stringify(payload),
@@ -218,7 +219,7 @@ export function createAdminApi(options: AdminApiOptions = {}) {
     },
 
     async updatePhotoType(type: string, payload: SavePhotoTypePayload): Promise<PhotoTypeOption> {
-      return await expectOk(await fetchImpl(`/api/admin/photo-types/${encodeURIComponent(type)}`, {
+      return await expectOk(await fetchImpl(apiUrl(`/api/admin/photo-types/${encodeURIComponent(type)}`), {
         method: 'PATCH',
         headers: headers(),
         body: JSON.stringify(payload),
@@ -226,14 +227,14 @@ export function createAdminApi(options: AdminApiOptions = {}) {
     },
 
     async verifyPhotoType(type: string): Promise<PhotoTypeOption> {
-      return await expectOk(await fetchImpl(`/api/admin/photo-types/${encodeURIComponent(type)}/verify`, {
+      return await expectOk(await fetchImpl(apiUrl(`/api/admin/photo-types/${encodeURIComponent(type)}/verify`), {
         method: 'POST',
         headers: headers(),
       }));
     },
 
     async deletePhotoType(type: string): Promise<void> {
-      await expectOk(await fetchImpl(`/api/admin/photo-types/${encodeURIComponent(type)}`, {
+      await expectOk(await fetchImpl(apiUrl(`/api/admin/photo-types/${encodeURIComponent(type)}`), {
         method: 'DELETE',
         headers: headers(),
       }));
@@ -288,6 +289,15 @@ export function createAdminApi(options: AdminApiOptions = {}) {
         method: 'PATCH',
         headers: headers(),
         body: JSON.stringify({ status, adminNotes }),
+      }));
+      return mapInspectionJob(row);
+    },
+
+    async updateJobAdminNotes(jobId: string, adminNotes: string): Promise<InspectionJob> {
+      const row = await expectOk(await fetchImpl(apiUrl(`/api/admin/jobs/${encodeURIComponent(jobId)}/admin-notes`), {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ adminNotes }),
       }));
       return mapInspectionJob(row);
     },

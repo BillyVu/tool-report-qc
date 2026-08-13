@@ -64,6 +64,63 @@ export function quadTriangles(quad: Quad): [Point[], Point[]] {
   ];
 }
 
+export type ResizeHandle = 'tl' | 'tr' | 'br' | 'bl' | 'top' | 'right' | 'bottom' | 'left';
+
+/**
+ * Resizes an aspect-locked crop rectangle by dragging one of its handles.
+ * The corner opposite the dragged handle stays fixed; the resulting rect always
+ * stays inside the unit square and preserves the startRect aspect ratio (w/h),
+ * so the crop frame can never drift out of the image.
+ */
+export function resizeAspectRect(startRect: RectNorm, handle: ResizeHandle, pointer: Point, min = 0.04): RectNorm {
+  const px = clamp01(pointer.x);
+  const py = clamp01(pointer.y);
+  const r = startRect;
+  const aspect = r.w / r.h;
+  const right = r.x + r.w;
+  const bottom = r.y + r.h;
+
+  const anchor: Point =
+    handle === 'br' || handle === 'right' || handle === 'bottom'
+      ? { x: r.x, y: r.y }
+      : handle === 'tl'
+        ? { x: right, y: bottom }
+        : handle === 'tr' || handle === 'top'
+          ? { x: r.x, y: bottom }
+          : { x: right, y: r.y };
+
+  const growsRight = handle === 'br' || handle === 'tr' || handle === 'right' || handle === 'bottom' || handle === 'top';
+  const growsDown = handle === 'br' || handle === 'bl' || handle === 'right' || handle === 'left' || handle === 'bottom';
+
+  let w: number;
+  let h: number;
+  if (handle === 'tl' || handle === 'tr' || handle === 'br' || handle === 'bl') {
+    w = Math.max(min, growsRight ? px - anchor.x : anchor.x - px);
+    h = Math.max(min, growsDown ? py - anchor.y : anchor.y - py);
+    if (w / h > aspect) h = w / aspect;
+    else w = h * aspect;
+  } else if (handle === 'right' || handle === 'left') {
+    w = Math.max(min, growsRight ? px - anchor.x : anchor.x - px);
+    h = w / aspect;
+  } else {
+    h = Math.max(min, growsDown ? py - anchor.y : anchor.y - py);
+    w = h * aspect;
+  }
+
+  const maxW = growsRight ? 1 - anchor.x : anchor.x;
+  const maxH = growsDown ? 1 - anchor.y : anchor.y;
+  const scale = Math.min(1, maxW / w, maxH / h);
+  w *= scale;
+  h *= scale;
+
+  return {
+    x: growsRight ? anchor.x : anchor.x - w,
+    y: growsDown ? anchor.y : anchor.y - h,
+    w,
+    h,
+  };
+}
+
 export function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }

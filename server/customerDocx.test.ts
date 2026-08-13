@@ -123,6 +123,54 @@ test('preserves the customer package while replacing metadata and evidence media
   }
 });
 
+test('removes static X530 image drawings for missing evidence slots', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'qc-customer-docx-missing-slots-'));
+  const templateDirectory = join(root, 'templates');
+  const uploadsDirectory = join(root, 'uploads');
+  await mkdir(templateDirectory);
+  await mkdir(uploadsDirectory);
+
+  try {
+    const oldPhoto = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: '#0000ff' },
+    }).png().toBuffer();
+    const zip = new PizZip();
+    zip.file('word/document.xml', `<?xml version="1.0"?>
+<w:document xmlns:w="${WORD_NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+  <w:body>
+    <w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId35"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+  </w:body>
+</w:document>`);
+    zip.file('word/_rels/document.xml.rels', `<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId35" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image35.png"/>
+</Relationships>`);
+    zip.file('word/media/image35.png', oldPhoto);
+    await writeFile(join(templateDirectory, TEMPLATE_NAME), zip.generate({ type: 'nodebuffer' }));
+
+    const report = await buildX530CustomerReport({
+      templateDirectory,
+      uploadsDirectory,
+      job: {
+        external_id: 'JOB-NO-PHOTOS',
+        batch_number: 'BATCH-NO-PHOTOS',
+        worker_name: 'Worker',
+        created_at: '2026-08-04T00:00:00+07:00',
+        template_snapshot: { docxTemplateName: TEMPLATE_NAME },
+        stepResults: [{ stepId: 'STEP_1', status: 'PENDING', note: '' }],
+      },
+      photos: [],
+    });
+
+    const output = new PizZip(report);
+    const documentXml = output.file('word/document.xml')?.asText() || '';
+    assert.doesNotMatch(documentXml, /<w:drawing>/);
+    assert.doesNotMatch(documentXml, /rId35/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('dynamically populates defects, packaging, and step rows with unique images', async () => {
   const root = await mkdtemp(join(tmpdir(), 'qc-dynamic-customer-docx-'));
   const templateDirectory = join(root, 'templates');
