@@ -104,6 +104,8 @@ interface CustomerReportJob {
     steps?: any[];
     cartonSpec?: string;
     deviceSpec?: string;
+    productCode?: string;
+    orderQty?: string | number;
   };
   defectsFindingData?: any[];
   packagingInfoData?: any;
@@ -122,7 +124,7 @@ export interface CustomerReportPhoto {
  * Replaces placeholders inside any XML element or Document.
  * Supports placeholders split across multiple <w:t> runs.
  */
-function replaceTextInElement(element: Element | Document, replacements: Record<string, string>): void {
+function replaceTextInElement(element: any, replacements: Record<string, string>): void {
   const paragraphs = element.getElementsByTagNameNS(WORD_NS, 'p');
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const p = paragraphs.item(pIdx);
@@ -201,7 +203,7 @@ export function isCustomerDocxTemplate(templateName?: string | null) {
   return basename(templateName || '') === X530_TEMPLATE_NAME;
 }
 
-function getNextRelationshipId(relsDom: Document): string {
+function getNextRelationshipId(relsDom: any): string {
   const relationships = relsDom.getElementsByTagName('Relationship');
   let maxId = 0;
   for (let i = 0; i < relationships.length; i++) {
@@ -254,7 +256,7 @@ async function processImageWithCoverFit(source: Buffer, targetAspect: number): P
   }
 }
 
-function replaceCellText(cell: Element | null, text: string) {
+function replaceCellText(cell: any, text: string) {
   if (!cell) return;
 
   const tcPr = cell.getElementsByTagNameNS(WORD_NS, 'tcPr').item(0);
@@ -299,13 +301,13 @@ function getUrlFromPhoto(photo: any): string {
 }
 
 async function insertImageToCell(
-  documentDom: Document,
-  relsDom: Document,
+  documentDom: any,
+  relsDom: any,
   zip: PizZip,
-  cell: Element,
+  cell: any,
   photo: any,
   uploadsDirectory: string,
-  templateDrawing: Element,
+  templateDrawing: any,
   aspect: number = 0.75
 ): Promise<void> {
   const photoUrl = getUrlFromPhoto(photo);
@@ -332,7 +334,7 @@ async function insertImageToCell(
       relationshipsEl.appendChild(newRel);
     }
 
-    const newDrawing = templateDrawing.cloneNode(true) as Element;
+    const newDrawing = templateDrawing.cloneNode(true);
     const blips = newDrawing.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 'blip');
     for (let b = 0; b < blips.length; b++) {
       const blip = blips.item(b);
@@ -367,19 +369,19 @@ async function insertImageToCell(
 }
 
 async function populateDefectsTable(
-  documentDom: Document,
-  relsDom?: Document,
+  documentDom: any,
+  relsDom?: any,
   zip?: PizZip,
   defects: any[] = [],
   uploadsDirectory?: string,
-  templateDrawing?: Element | null
+  templateDrawing?: any
 ) {
   const rows = documentDom.getElementsByTagNameNS(WORD_NS, 'tr');
 
-  const sampleDefectRows: Element[] = [];
-  const noDefectRows: Element[] = [];
-  const totalFoundRows: Element[] = [];
-  let firstSampleRow: Element | null = null;
+  const sampleDefectRows: any[] = [];
+  const noDefectRows: any[] = [];
+  const totalFoundRows: any[] = [];
+  let firstSampleRow: any = null;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows.item(i);
@@ -450,7 +452,7 @@ async function populateDefectsTable(
     const templateRow = firstSampleRow || totalFoundRows[0];
     if (!templateRow) return;
 
-    const emptyRow = templateRow.cloneNode(true) as Element;
+    const emptyRow = templateRow.cloneNode(true);
     const cells = emptyRow.getElementsByTagNameNS(WORD_NS, 'tc');
     if (cells.length >= 5) {
       replaceCellText(cells.item(0), 'No defect');
@@ -473,7 +475,7 @@ async function populateDefectsTable(
       const isMajor = defect.defectType === 'Major';
       const isMinor = defect.defectType === 'Minor' || (!isCritical && !isMajor);
 
-      const newRow = templateRow.cloneNode(true) as Element;
+      const newRow = templateRow.cloneNode(true);
       const cells = newRow.getElementsByTagNameNS(WORD_NS, 'tc');
       if (cells.length >= 5) {
         replaceCellText(cells.item(0), defect.description || '');
@@ -505,7 +507,7 @@ async function populateDefectsTable(
   }
 }
 
-function populatePackagingTables(documentDom: Document, job: CustomerReportJob) {
+function populatePackagingTables(documentDom: any, job: CustomerReportJob) {
   const pkg = job.packagingInfoData || (job as any).packaging_info_data || {};
   const templateSnap = job.template_snapshot || {};
   const productCode = templateSnap.productCode || 'X530';
@@ -606,12 +608,12 @@ function populatePackagingTables(documentDom: Document, job: CustomerReportJob) 
 }
 
 async function populatePackagingPhotos(
-  documentDom: Document,
-  relsDom: Document,
+  documentDom: any,
+  relsDom: any,
   zip: PizZip,
   job: any,
   uploadsDirectory: string,
-  templateDrawing: Element | null
+  templateDrawing: any
 ) {
   if (!templateDrawing) return;
 
@@ -658,15 +660,15 @@ async function populatePackagingPhotos(
 }
 
 async function populateStepsTable(
-  documentDom: Document,
-  relsDom: Document,
+  documentDom: any,
+  relsDom: any,
   zip: PizZip,
   job: any,
   photos: CustomerReportPhoto[],
   uploadsDirectory: string
 ) {
   const rows = documentDom.getElementsByTagNameNS(WORD_NS, 'tr');
-  let templateRow: Element | null = null;
+  let templateRow: any = null;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows.item(i);
@@ -735,18 +737,18 @@ async function populateStepsTable(
     const onePhotoPerSlot = [...latestBySlot.entries()].sort((a, b) => a[0] - b[0]).map(([, photo]) => photo);
 
     const drawings = newRow.getElementsByTagNameNS(WORD_NS, 'drawing');
-    let imageCell: Element | null = null;
-    let templateP: Element | null = null;
+    let imageCell: any = null;
+    let templateP: any = null;
 
     if (drawings.length > 0) {
       const drawing = drawings.item(0);
-      let parent: Node | null = drawing?.parentNode;
+      let parent: any = drawing?.parentNode;
       while (parent && parent.nodeName !== 'w:p') {
         parent = parent.parentNode;
       }
       if (parent) {
-        templateP = parent as Element;
-        imageCell = templateP.parentNode as Element;
+        templateP = parent;
+        imageCell = templateP.parentNode;
       }
     }
 
@@ -762,7 +764,7 @@ async function populateStepsTable(
       } else {
         for (let pIdx = 0; pIdx < onePhotoPerSlot.length; pIdx++) {
           const photo = onePhotoPerSlot[pIdx];
-          const photoP = templateP.cloneNode(true) as Element;
+          const photoP = templateP.cloneNode(true);
 
           const slotLabel = photo.slot_index ? `Slot ${photo.slot_index}` : `Ảnh ${pIdx + 1}`;
           replaceTextInElement(photoP, { '{{slot_label}}': slotLabel });
@@ -844,9 +846,9 @@ export async function buildX530CustomerReport(options: {
 
   const documentDomForExtract = new DOMParser().parseFromString(docXmlText, 'application/xml');
   const docDrawings = documentDomForExtract.getElementsByTagNameNS(WORD_NS, 'drawing');
-  let templateDrawing: Element | null = null;
+  let templateDrawing: any = null;
   if (docDrawings.length > 0) {
-    templateDrawing = docDrawings.item(0).cloneNode(true) as Element;
+    templateDrawing = docDrawings.item(0).cloneNode(true);
   }
 
   if (isDynamicTemplate) {
