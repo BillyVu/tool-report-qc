@@ -260,7 +260,7 @@ async function fetchImageBuffer(url?: string, headers?: HeadersInit): Promise<{ 
   }
 }
 
-async function convertImageBufferToPng(data: Uint8Array, mimeType: string): Promise<Uint8Array | null> {
+async function convertImageBufferToPng(data: any, mimeType: string): Promise<Uint8Array | null> {
   const blob = new Blob([data], { type: mimeType });
   const canvas = document.createElement('canvas');
   let objectUrl = '';
@@ -353,7 +353,7 @@ async function fetchImageForDocx(jobId: string, url: string, type: SourceImageTy
 }
 
 function createExportOverlay(jobId: string) {
-  if (typeof document === 'undefined') return { updateMessage: () => {}, remove: () => {} };
+  if (typeof document === 'undefined') return { updateMessage: () => { }, remove: () => { } };
 
   const overlayId = 'qc-docx-export-overlay';
   const existing = document.getElementById(overlayId);
@@ -431,12 +431,12 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
 
     const completedDateStr = exportJob.completedAt
       ? new Date(exportJob.completedAt).toLocaleDateString('vi-VN', {
-          day: '2-digit',
-          month: '2-digit',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        })
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
       : 'Chưa hoàn thành';
 
     // Process all image buffers for step results, including multi-slot captures.
@@ -463,748 +463,748 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
     overlay.updateMessage('Đang tổng hợp các bảng thông số & kết cấu văn bản Word...');
     const veroLogo = await fetchImageBuffer('/vero-qc-icon.png');
 
-  // Common borders for tables - 0.5pt solid black border matching standard report tables
-  const cellBorder = {
-    top: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-    bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-    left: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-    right: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
-  };
+    // Common borders for tables - 0.5pt solid black border matching standard report tables
+    const cellBorder = {
+      top: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+      bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+      left: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+      right: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+    };
 
-  const clientName = matchedTemplate?.clientName || "ATT";
-  const supplierName = matchedTemplate?.supplierName || "Eagleon";
-  const manufacturerName = matchedTemplate?.supplierName || "EAGLEON (VN) COMPANY LIMITED(CÔNG TY TNHH EAGLEON (VN))";
-  const manufacturerLocation = matchedTemplate?.supplierLocation || "Factory No. 2, Lot CN-A5 Chau Phong Industrial Cluster, Chau Cau Village, Phu Lang Commune, Bac Ninh Province, Vietnam";
-  const manufacturerContact = matchedTemplate?.supplierContact || "Xu yu xin";
-  const orderQty = matchedTemplate?.orderQty || "117";
-  const cartonQty = matchedTemplate?.cartonQty || "24";
-  const sysVer = matchedTemplate?.systemVersion || "15";
-  const buildNum = matchedTemplate?.buildNumber || "X53.0-04-15.0-10.30.00";
-  const hwVer = matchedTemplate?.hardwareVersion || "V1.0";
-  const cartonSpec = matchedTemplate?.cartonSpec || "310x195x125mm";
-  const deviceSpec = matchedTemplate?.deviceSpec || "164.22x66.59x21.91";
+    const clientName = matchedTemplate?.clientName || "ATT";
+    const supplierName = matchedTemplate?.supplierName || "Eagleon";
+    const manufacturerName = matchedTemplate?.supplierName || "EAGLEON (VN) COMPANY LIMITED(CÔNG TY TNHH EAGLEON (VN))";
+    const manufacturerLocation = matchedTemplate?.supplierLocation || "Factory No. 2, Lot CN-A5 Chau Phong Industrial Cluster, Chau Cau Village, Phu Lang Commune, Bac Ninh Province, Vietnam";
+    const manufacturerContact = matchedTemplate?.supplierContact || "Xu yu xin";
+    const orderQty = matchedTemplate?.orderQty || "117";
+    const cartonQty = matchedTemplate?.cartonQty || "24";
+    const sysVer = matchedTemplate?.systemVersion || "15";
+    const buildNum = matchedTemplate?.buildNumber || "X53.0-04-15.0-10.30.00";
+    const hwVer = matchedTemplate?.hardwareVersion || "V1.0";
+    const cartonSpec = matchedTemplate?.cartonSpec || "310x195x125mm";
+    const deviceSpec = matchedTemplate?.deviceSpec || "164.22x66.59x21.91";
 
-  // Table 1: Header Client & Manufacturer Info Table (Image 1)
-  const headerInfoTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, width: { size: 18, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Client:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, width: { size: 32, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: clientName, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, width: { size: 15, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Tel.:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, width: { size: 15, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "--", size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Fax:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "--", size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Attn.:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Ava", size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Supplier:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 3, children: [new Paragraph({ children: [new TextRun({ text: supplierName, size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Inspection Date:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: dateStr.split(' ')[0] || dateStr, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 4, children: [new Paragraph({ children: [new TextRun({ text: "1st / 2nd Re-inspection (Previous Report No.        )", size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Product Description:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: `${exportJob.productName} (${exportJob.productCode})`, bold: true, size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: `System version: ${sysVer}`, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: `Build number: ${buildNum}`, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: `Hardware version: ${hwVer}`, size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Manufacturer Name:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: manufacturerName, size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Manufacturer Location:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: manufacturerLocation, size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Manufacturer Contact:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: manufacturerContact, size: 18 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Service Required:", bold: true, size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: "☑ FRI (Final Random Inspection)", size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: "☐ DPI (During Production Inspection)", size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "☐ Other", size: 18 })] })] }),
-        ],
-      }),
-    ],
-  });
-
-  const sampleSizeVal = exportJob.templateSnapshot?.orderQty || matchedTemplate?.orderQty || exportJob.stepResults?.[0]?.sampleSize || "120";
-
-  // Table 2: FQC Order Quantity Summary Table (Image 1)
-  const fqcTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "P/O No.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Item No.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "SKU#", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Order Qty.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Carton Qty.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Sales destination", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Inspected Qty.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Inspection Date", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Sample Size", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Production (%)", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "QA Passed Qty", bold: true, size: 16 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.batchNumber, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.productCode, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "6169F", size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: orderQty, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cartonQty, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: clientName, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: orderQty, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dateStr.split(' ')[0] || dateStr, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sampleSizeVal, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "100%", size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.status === 'COMPLETED' ? orderQty : '0', size: 16 })] })] }),
-        ],
-      }),
-    ],
-  });
-
-  // Table 3: Inspection Result Box (Image 1)
-  const resultBoxTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({
-            borders: cellBorder,
-            width: { size: 30, type: WidthType.PERCENTAGE },
-            children: [new Paragraph({ children: [new TextRun({ text: "INSPECTION RESULT:", bold: true, size: 20 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            width: { size: 70, type: WidthType.PERCENTAGE },
-            children: [
-              new Paragraph({
-                children: [
-                  new TextRun({ text: exportJob.status === 'COMPLETED' ? "☑ PASS + Section A-3 Remark#" : "☐ PASS", bold: exportJob.status === 'COMPLETED', size: 20, color: exportJob.status === 'COMPLETED' ? "15803D" : "000000" }),
-                ],
-              }),
-              new Paragraph({
-                children: [
-                  new TextRun({ text: exportJob.status === 'FAILED' ? "☑ FAIL + Section A-3 Remark#" : "☐ FAIL", bold: exportJob.status === 'FAILED', size: 20, color: exportJob.status === 'FAILED' ? "B91C1C" : "000000" }),
-                ],
-              }),
-              new Paragraph({
-                children: [
-                  new TextRun({ text: "☐ ON HOLD + Section A-3 Remark#", size: 20 }),
-                ],
-              }),
-            ],
-          }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({
-            borders: cellBorder,
-            children: [new Paragraph({ children: [new TextRun({ text: "ON-SITE CC (Construction check) INFORMATION:", bold: true, size: 18 })] })],
-          }),
-          new TableCell({
-            borders: cellBorder,
-            children: [
-              new Paragraph({ children: [new TextRun({ text: "☑ N/A", size: 18 })] }),
-              new Paragraph({ children: [new TextRun({ text: "The On-site CC for this item was performed on YYYY-MM-DD as per our report no.        with the result - PASS / FAIL / ON HOLD", size: 16, color: "64748B" })] }),
-            ],
-          }),
-        ],
-      }),
-    ],
-  });
-
-  // Table 4: Section A-1) AQL and Defects Finding Table (Image 2)
-  const aqlStandardText = matchedTemplate?.aqlStandard || "ISO 2859-1";
-  const inspectionLevelText = matchedTemplate?.inspectionLevel || "Full inspection";
-
-  const rawDefects = Array.isArray(exportJob.defectsFindingData)
-    ? exportJob.defectsFindingData
-    : (Array.isArray(matchedTemplate?.defectsFindingData) ? matchedTemplate.defectsFindingData : []);
-  const defectsList = rawDefects.filter(d => d && typeof d.description === 'string' && d.description.trim().length > 0);
-  
-  const defectRows: TableRow[] = [
-    new TableRow({
-      children: [
-        new TableCell({
-          borders: cellBorder,
-          shading: { fill: "1E293B", type: ShadingType.CLEAR },
-          columnSpan: 5,
-          children: [new Paragraph({ children: [new TextRun({ text: "A-1) AQL and Defects Finding", bold: true, color: "FFFFFF", size: 18 })] })]
-        })
-      ]
-    }),
-    new TableRow({
-      children: [
-        new TableCell({
-          borders: cellBorder,
-          columnSpan: 3,
-          children: [new Paragraph({ children: [new TextRun({ text: `Inspection Sampling Standard Adopted:   ☑ ${aqlStandardText}`, size: 16 })] })]
+    // Table 1: Header Client & Manufacturer Info Table (Image 1)
+    const headerInfoTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, width: { size: 18, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Client:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, width: { size: 32, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: clientName, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, width: { size: 15, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Tel.:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, width: { size: 15, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "--", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Fax:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "--", size: 18 })] })] }),
+          ],
         }),
-        new TableCell({
-          borders: cellBorder,
-          columnSpan: 2,
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Nonconformity (defective)", bold: true, size: 16 })] })]
-        })
-      ]
-    }),
-    new TableRow({
-      children: [
-        new TableCell({
-          borders: cellBorder,
-          columnSpan: 2,
-          children: [new Paragraph({ children: [new TextRun({ text: "Inspection Plan:  Single sampling plans for normal Inspection", size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Attn.:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Ava", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Supplier:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 3, children: [new Paragraph({ children: [new TextRun({ text: supplierName, size: 18 })] })] }),
+          ],
         }),
-        new TableCell({
-          borders: cellBorder,
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Critical", bold: true, size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Inspection Date:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: dateStr.split(' ')[0] || dateStr, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 4, children: [new Paragraph({ children: [new TextRun({ text: "1st / 2nd Re-inspection (Previous Report No.        )", size: 18 })] })] }),
+          ],
         }),
-        new TableCell({
-          borders: cellBorder,
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Major", bold: true, size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Product Description:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: `${exportJob.productName} (${exportJob.productCode})`, bold: true, size: 18 })] })] }),
+          ],
         }),
-        new TableCell({
-          borders: cellBorder,
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Minor", bold: true, size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: `System version: ${sysVer}`, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: `Build number: ${buildNum}`, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: `Hardware version: ${hwVer}`, size: 18 })] })] }),
+          ],
         }),
-      ]
-    }),
-    new TableRow({
-      children: [
-        new TableCell({
-          borders: cellBorder,
-          columnSpan: 2,
-          children: [new Paragraph({ children: [new TextRun({ text: `Inspection Level:  ${inspectionLevelText}`, size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Manufacturer Name:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: manufacturerName, size: 18 })] })] }),
+          ],
         }),
-        new TableCell({
-          borders: cellBorder,
-          children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "AQL:", bold: true, size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Manufacturer Location:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: manufacturerLocation, size: 18 })] })] }),
+          ],
         }),
-        new TableCell({
-          borders: cellBorder,
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Not Allowed", size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Manufacturer Contact:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 5, children: [new Paragraph({ children: [new TextRun({ text: manufacturerContact, size: 18 })] })] }),
+          ],
         }),
-        new TableCell({
-          borders: cellBorder,
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 16 })] })]
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Service Required:", bold: true, size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: "☑ FRI (Final Random Inspection)", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, columnSpan: 2, children: [new Paragraph({ children: [new TextRun({ text: "☐ DPI (During Production Inspection)", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "☐ Other", size: 18 })] })] }),
+          ],
         }),
-      ]
-    }),
-    new TableRow({
-      children: [
-        new TableCell({
-          borders: cellBorder,
-          columnSpan: 2,
-          children: [new Paragraph({ children: [new TextRun({ text: "Inspection with:  ☑ Specific check list    ☐ Golden sample    ☐ General check list", size: 16 })] })]
-        }),
-        new TableCell({
-          borders: cellBorder,
-          children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "Sample Size:", bold: true, size: 16 })] })]
-        }),
-        new TableCell({
-          borders: cellBorder,
-          columnSpan: 2,
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sampleSizeVal, bold: true, size: 18 })] })]
-        }),
-      ]
-    }),
-    new TableRow({
-      children: [
-        new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 40, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Defect Description", bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 30, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Photo", bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Critical", bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Major", bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Minor", bold: true, size: 18 })] })] }),
       ],
-    }),
-  ];
+    });
 
-  if (defectsList.length === 0) {
+    const sampleSizeVal = exportJob.templateSnapshot?.orderQty || matchedTemplate?.orderQty || exportJob.stepResults?.[0]?.sampleSize || "120";
+
+    // Table 2: FQC Order Quantity Summary Table (Image 1)
+    const fqcTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "P/O No.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Item No.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "SKU#", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Order Qty.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Carton Qty.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Sales destination", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Inspected Qty.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Inspection Date", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Sample Size", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Production (%)", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "QA Passed Qty", bold: true, size: 16 })] })] }),
+          ],
+        }),
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.batchNumber, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.productCode, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "6169F", size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: orderQty, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cartonQty, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: clientName, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: orderQty, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dateStr.split(' ')[0] || dateStr, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sampleSizeVal, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "100%", size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.status === 'COMPLETED' ? orderQty : '0', size: 16 })] })] }),
+          ],
+        }),
+      ],
+    });
+
+    // Table 3: Inspection Result Box (Image 1)
+    const resultBoxTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({
+              borders: cellBorder,
+              width: { size: 30, type: WidthType.PERCENTAGE },
+              children: [new Paragraph({ children: [new TextRun({ text: "INSPECTION RESULT:", bold: true, size: 20 })] })],
+            }),
+            new TableCell({
+              borders: cellBorder,
+              width: { size: 70, type: WidthType.PERCENTAGE },
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: exportJob.status === 'COMPLETED' ? "☑ PASS + Section A-3 Remark#" : "☐ PASS", bold: exportJob.status === 'COMPLETED', size: 20, color: exportJob.status === 'COMPLETED' ? "15803D" : "000000" }),
+                  ],
+                }),
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: exportJob.status === 'FAILED' ? "☑ FAIL + Section A-3 Remark#" : "☐ FAIL", bold: exportJob.status === 'FAILED', size: 20, color: exportJob.status === 'FAILED' ? "B91C1C" : "000000" }),
+                  ],
+                }),
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: "☐ ON HOLD + Section A-3 Remark#", size: 20 }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+        new TableRow({
+          children: [
+            new TableCell({
+              borders: cellBorder,
+              children: [new Paragraph({ children: [new TextRun({ text: "ON-SITE CC (Construction check) INFORMATION:", bold: true, size: 18 })] })],
+            }),
+            new TableCell({
+              borders: cellBorder,
+              children: [
+                new Paragraph({ children: [new TextRun({ text: "☑ N/A", size: 18 })] }),
+                new Paragraph({ children: [new TextRun({ text: "The On-site CC for this item was performed on YYYY-MM-DD as per our report no.        with the result - PASS / FAIL / ON HOLD", size: 16, color: "64748B" })] }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+
+    // Table 4: Section A-1) AQL and Defects Finding Table (Image 2)
+    const aqlStandardText = matchedTemplate?.aqlStandard || "ISO 2859-1";
+    const inspectionLevelText = matchedTemplate?.inspectionLevel || "Full inspection";
+
+    const rawDefects = Array.isArray(exportJob.defectsFindingData)
+      ? exportJob.defectsFindingData
+      : (Array.isArray(matchedTemplate?.defectsFindingData) ? matchedTemplate.defectsFindingData : []);
+    const defectsList = rawDefects.filter(d => d && typeof d.description === 'string' && d.description.trim().length > 0);
+
+    const defectRows: TableRow[] = [
+      new TableRow({
+        children: [
+          new TableCell({
+            borders: cellBorder,
+            shading: { fill: "1E293B", type: ShadingType.CLEAR },
+            columnSpan: 5,
+            children: [new Paragraph({ children: [new TextRun({ text: "A-1) AQL and Defects Finding", bold: true, color: "FFFFFF", size: 18 })] })]
+          })
+        ]
+      }),
+      new TableRow({
+        children: [
+          new TableCell({
+            borders: cellBorder,
+            columnSpan: 3,
+            children: [new Paragraph({ children: [new TextRun({ text: `Inspection Sampling Standard Adopted:   ☑ ${aqlStandardText}`, size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            columnSpan: 2,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Nonconformity (defective)", bold: true, size: 16 })] })]
+          })
+        ]
+      }),
+      new TableRow({
+        children: [
+          new TableCell({
+            borders: cellBorder,
+            columnSpan: 2,
+            children: [new Paragraph({ children: [new TextRun({ text: "Inspection Plan:  Single sampling plans for normal Inspection", size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Critical", bold: true, size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Major", bold: true, size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Minor", bold: true, size: 16 })] })]
+          }),
+        ]
+      }),
+      new TableRow({
+        children: [
+          new TableCell({
+            borders: cellBorder,
+            columnSpan: 2,
+            children: [new Paragraph({ children: [new TextRun({ text: `Inspection Level:  ${inspectionLevelText}`, size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "AQL:", bold: true, size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Not Allowed", size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 16 })] })]
+          }),
+        ]
+      }),
+      new TableRow({
+        children: [
+          new TableCell({
+            borders: cellBorder,
+            columnSpan: 2,
+            children: [new Paragraph({ children: [new TextRun({ text: "Inspection with:  ☑ Specific check list    ☐ Golden sample    ☐ General check list", size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: "Sample Size:", bold: true, size: 16 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            columnSpan: 2,
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sampleSizeVal, bold: true, size: 18 })] })]
+          }),
+        ]
+      }),
+      new TableRow({
+        children: [
+          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 40, type: WidthType.PERCENTAGE }, children: [new Paragraph({ children: [new TextRun({ text: "Defect Description", bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 30, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Photo", bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Critical", bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Major", bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, width: { size: 10, type: WidthType.PERCENTAGE }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Minor", bold: true, size: 18 })] })] }),
+        ],
+      }),
+    ];
+
+    if (defectsList.length === 0) {
+      defectRows.push(
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "No defect", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "N/A", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
+          ],
+        })
+      );
+    } else {
+      defectsList.forEach((def) => {
+        const isCritical = def.defectType === 'Critical';
+        const isMajor = def.defectType === 'Major';
+        const isMinor = def.defectType === 'Minor' || (!isCritical && !isMajor);
+
+        defectRows.push(
+          new TableRow({
+            children: [
+              new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: def.description, size: 18 })] })] }),
+              new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: def.photos?.length ? "[Photo Attached]" : "N/A", size: 16, color: def.photos?.length ? "0284C7" : "64748B" })] })] }),
+              new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: isCritical ? `${def.count || 1}` : "", size: 18 })] })] }),
+              new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: isMajor ? `${def.count || 1}` : "", size: 18 })] })] }),
+              new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: isMinor ? `${def.count || 1}` : "", size: 18 })] })] }),
+            ],
+          })
+        );
+      });
+    }
+
+    const totalMinor = defectsList.filter(d => d.defectType === 'Minor' || !d.defectType).reduce((sum, d) => sum + (d.count || 1), 0);
+    const totalMajor = defectsList.filter(d => d.defectType === 'Major').reduce((sum, d) => sum + (d.count || 1), 0);
+    const totalCritical = defectsList.filter(d => d.defectType === 'Critical').reduce((sum, d) => sum + (d.count || 1), 0);
+
     defectRows.push(
       new TableRow({
         children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "No defect", size: 18 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "N/A", size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Total Found:", bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${totalCritical}`, bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${totalMajor}`, bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${totalMinor}`, bold: true, size: 18 })] })] }),
+        ],
+      }),
+      new TableRow({
+        children: [
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Max. Allowed:", bold: true, size: 18 })] })] }),
+          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
           new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
         ],
       })
     );
-  } else {
-    defectsList.forEach((def) => {
-      const isCritical = def.defectType === 'Critical';
-      const isMajor = def.defectType === 'Major';
-      const isMinor = def.defectType === 'Minor' || (!isCritical && !isMajor);
 
-      defectRows.push(
+    const aqlDefectsTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: defectRows,
+    });
+
+    // Table 5: Section B-3 Packaging & B-4 Device Measurement Tables (Images 3 & 4)
+    const pkgData = exportJob.packagingInfoData || matchedTemplate?.packagingInfoData || {};
+    const cSize = pkgData.cartonMeasuredSize || '310x195x125mm';
+    const cNw = pkgData.cartonNw || '2758.5';
+    const cGw = pkgData.cartonGw || '3348.7';
+    const dSize = pkgData.deviceMeasuredSize || '164.22×66.59×21.91';
+    const dNw = pkgData.deviceNw || '201.7';
+    const dGw = pkgData.deviceGw || '281.1';
+
+    const packagingTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
         new TableRow({
           children: [
-            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: def.description, size: 18 })] })] }),
-            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: def.photos?.length ? "[Photo Attached]" : "N/A", size: 16, color: def.photos?.length ? "0284C7" : "64748B" })] })] }),
-            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: isCritical ? `${def.count || 1}` : "", size: 18 })] })] }),
-            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: isMajor ? `${def.count || 1}` : "", size: 18 })] })] }),
-            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: isMinor ? `${def.count || 1}` : "", size: 18 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Item #", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Specification", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Size(mm) Measured", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) N.W.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) G.W.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
           ],
-        })
-      );
+        }),
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Outer carton", size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: cartonSpec, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cSize, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.cartonResult || "For refer", size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cNw, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cGw, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.cartonResult || "For refer", size: 16 })] })] }),
+          ],
+        }),
+      ],
     });
-  }
 
-  const totalMinor = defectsList.filter(d => d.defectType === 'Minor' || !d.defectType).reduce((sum, d) => sum + (d.count || 1), 0);
-  const totalMajor = defectsList.filter(d => d.defectType === 'Major').reduce((sum, d) => sum + (d.count || 1), 0);
-  const totalCritical = defectsList.filter(d => d.defectType === 'Critical').reduce((sum, d) => sum + (d.count || 1), 0);
-
-  defectRows.push(
-    new TableRow({
-      children: [
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Total Found:", bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${totalCritical}`, bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${totalMajor}`, bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${totalMinor}`, bold: true, size: 18 })] })] }),
+    const deviceMeasurementTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Item #", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Specification", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Size(mm) Measured", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) N.W.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) G.W.", bold: true, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
+          ],
+        }),
+        new TableRow({
+          children: [
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Device", size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: deviceSpec, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dSize, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.deviceResult || "For refer", size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dNw, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dGw, size: 16 })] })] }),
+            new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.deviceResult || "For refer", size: 16 })] })] }),
+          ],
+        }),
       ],
-    }),
-    new TableRow({
-      children: [
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Max. Allowed:", bold: true, size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
-        new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "--", size: 18 })] })] }),
-      ],
-    })
-  );
+    });
 
-  const aqlDefectsTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: defectRows,
-  });
-
-  // Table 5: Section B-3 Packaging & B-4 Device Measurement Tables (Images 3 & 4)
-  const pkgData = exportJob.packagingInfoData || matchedTemplate?.packagingInfoData || {};
-  const cSize = pkgData.cartonMeasuredSize || '310x195x125mm';
-  const cNw = pkgData.cartonNw || '2758.5';
-  const cGw = pkgData.cartonGw || '3348.7';
-  const dSize = pkgData.deviceMeasuredSize || '164.22×66.59×21.91';
-  const dNw = pkgData.deviceNw || '201.7';
-  const dGw = pkgData.deviceGw || '281.1';
-
-  const packagingTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
+    // Table 6: Section C: ON-SITE CHECKING Table (Image 5)
+    const stepRows: TableRow[] = [
       new TableRow({
         children: [
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Item #", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Specification", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Size(mm) Measured", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) N.W.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) G.W.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Outer carton", size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: cartonSpec, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cSize, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.cartonResult || "For refer", size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cNw, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: cGw, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.cartonResult || "For refer", size: 16 })] })] }),
-        ],
-      }),
-    ],
-  });
+          new TableCell({
+            borders: cellBorder,
+            shading: { fill: "262626", type: ShadingType.CLEAR },
+            width: { size: 20, type: WidthType.PERCENTAGE },
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Test performed", bold: true, color: "FFFFFF", size: 18 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            shading: { fill: "262626", type: ShadingType.CLEAR },
+            width: { size: 12, type: WidthType.PERCENTAGE },
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Sample size", bold: true, color: "FFFFFF", size: 18 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            shading: { fill: "262626", type: ShadingType.CLEAR },
+            width: { size: 44, type: WidthType.PERCENTAGE },
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Test Photo", bold: true, color: "FFFFFF", size: 18 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            shading: { fill: "262626", type: ShadingType.CLEAR },
+            width: { size: 12, type: WidthType.PERCENTAGE },
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, color: "FFFFFF", size: 18 })] })]
+          }),
+          new TableCell({
+            borders: cellBorder,
+            shading: { fill: "262626", type: ShadingType.CLEAR },
+            width: { size: 12, type: WidthType.PERCENTAGE },
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Comments", bold: true, color: "FFFFFF", size: 18 })] })]
+          }),
+        ]
+      })
+    ];
 
-  const deviceMeasurementTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Item #", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Specification", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Size(mm) Measured", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) N.W.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Weight (g) G.W.", bold: true, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, shading: { fill: "F2F2F2", type: ShadingType.CLEAR }, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, size: 16 })] })] }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: "Device", size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ children: [new TextRun({ text: deviceSpec, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dSize, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.deviceResult || "For refer", size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dNw, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: dGw, size: 16 })] })] }),
-          new TableCell({ borders: cellBorder, children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: pkgData.deviceResult || "For refer", size: 16 })] })] }),
-        ],
-      }),
-    ],
-  });
+    exportJob.stepResults.forEach((sr, idx) => {
+      const stepDef = matchedTemplate?.steps.find(s => s.stepId === sr.stepId);
+      const stepTitle = stepDef ? stepDef.title : `Bước ${sr.stepId}`;
+      const imageBuffers = stepImagesMap[sr.stepId] || [];
+      const targetMaxWidth = mmToDocxPx(stepDef?.mapping?.imageWidthMm, 60);
+      const targetMaxHeight = mmToDocxPx(stepDef?.mapping?.imageHeightMm, 45);
 
-  // Table 6: Section C: ON-SITE CHECKING Table (Image 5)
-  const stepRows: TableRow[] = [
-    new TableRow({
-      children: [
-        new TableCell({
-          borders: cellBorder,
-          shading: { fill: "262626", type: ShadingType.CLEAR },
-          width: { size: 20, type: WidthType.PERCENTAGE },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Test performed", bold: true, color: "FFFFFF", size: 18 })] })]
-        }),
-        new TableCell({
-          borders: cellBorder,
-          shading: { fill: "262626", type: ShadingType.CLEAR },
-          width: { size: 12, type: WidthType.PERCENTAGE },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Sample size", bold: true, color: "FFFFFF", size: 18 })] })]
-        }),
-        new TableCell({
-          borders: cellBorder,
-          shading: { fill: "262626", type: ShadingType.CLEAR },
-          width: { size: 44, type: WidthType.PERCENTAGE },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Test Photo", bold: true, color: "FFFFFF", size: 18 })] })]
-        }),
-        new TableCell({
-          borders: cellBorder,
-          shading: { fill: "262626", type: ShadingType.CLEAR },
-          width: { size: 12, type: WidthType.PERCENTAGE },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Result", bold: true, color: "FFFFFF", size: 18 })] })]
-        }),
-        new TableCell({
-          borders: cellBorder,
-          shading: { fill: "262626", type: ShadingType.CLEAR },
-          width: { size: 12, type: WidthType.PERCENTAGE },
-          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Comments", bold: true, color: "FFFFFF", size: 18 })] })]
-        }),
-      ]
-    })
-  ];
-
-  exportJob.stepResults.forEach((sr, idx) => {
-    const stepDef = matchedTemplate?.steps.find(s => s.stepId === sr.stepId);
-    const stepTitle = stepDef ? stepDef.title : `Bước ${sr.stepId}`;
-    const imageBuffers = stepImagesMap[sr.stepId] || [];
-    const targetMaxWidth = mmToDocxPx(stepDef?.mapping?.imageWidthMm, 60);
-    const targetMaxHeight = mmToDocxPx(stepDef?.mapping?.imageHeightMm, 45);
-
-    const imageChildren: (Paragraph)[] = [];
-    const validImages = imageBuffers.filter((image): image is StepImageBuffer & { data: Uint8Array; type: ExportImageType } => !!image.data && !!image.type);
-    if (imageBuffers.length > 0) {
-      imageBuffers.forEach((image) => {
-        if (!image.data || !image.type) {
-          imageChildren.push(buildMissingEvidenceParagraph(image.label));
-          return;
-        }
-        try {
-          // Calculate aspect-ratio-preserved dimensions so images retain natural proportions instead of stretching
-          const dims = getImageDimensions(image.data);
-          let finalWidth = targetMaxWidth;
-          let finalHeight = targetMaxHeight;
-
-          if (dims && dims.width > 0 && dims.height > 0) {
-            const aspect = dims.width / dims.height;
-            finalWidth = targetMaxWidth;
-            finalHeight = Math.round(targetMaxWidth / aspect);
-            if (finalHeight > targetMaxHeight) {
-              finalHeight = targetMaxHeight;
-              finalWidth = Math.round(targetMaxHeight * aspect);
-            }
+      const imageChildren: (Paragraph)[] = [];
+      const validImages = imageBuffers.filter((image): image is StepImageBuffer & { data: Uint8Array; type: ExportImageType } => !!image.data && !!image.type);
+      if (imageBuffers.length > 0) {
+        imageBuffers.forEach((image) => {
+          if (!image.data || !image.type) {
+            imageChildren.push(buildMissingEvidenceParagraph(image.label));
+            return;
           }
+          try {
+            // Calculate aspect-ratio-preserved dimensions so images retain natural proportions instead of stretching
+            const dims = getImageDimensions(image.data);
+            let finalWidth = targetMaxWidth;
+            let finalHeight = targetMaxHeight;
 
-          imageChildren.push(
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [
-                new TextRun({
-                  text: image.label,
-                  size: 14,
-                  bold: true,
-                  color: "334155"
-                })
-              ]
-            })
-          );
-          imageChildren.push(
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [
-                new ImageRun({
-                  data: image.data,
-                  transformation: {
-                    width: finalWidth,
-                    height: finalHeight,
-                  },
-                  type: image.type
-                }),
-              ],
-            })
-          );
-        } catch {
-          imageChildren.push(
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: `[Không thể chèn ảnh: ${image.label}]`, size: 16, color: "94A3B8" })]
-            })
-          );
-        }
-      });
-    } else {
-      imageChildren.push(
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          children: [new TextRun({ text: "Chưa thu thập ảnh", size: 16, color: "94A3B8", italics: true })]
-        })
-      );
-    }
+            if (dims && dims.width > 0 && dims.height > 0) {
+              const aspect = dims.width / dims.height;
+              finalWidth = targetMaxWidth;
+              finalHeight = Math.round(targetMaxWidth / aspect);
+              if (finalHeight > targetMaxHeight) {
+                finalHeight = targetMaxHeight;
+                finalWidth = Math.round(targetMaxHeight * aspect);
+              }
+            }
 
-    stepRows.push(
-      new TableRow({
-        children: [
-          // Col 1: Test performed
-          new TableCell({
-            borders: cellBorder,
-            children: [
-              new Paragraph({ children: [new TextRun({ text: `${idx + 1}. `, bold: true, size: 18 }), new TextRun({ text: stepTitle, bold: true, size: 18 })] }),
-              new Paragraph({ children: [new TextRun({ text: `Mã: ${sr.stepId}`, size: 14, color: "64748B" })] }),
-            ]
-          }),
-          // Col 2: Sample size
-          new TableCell({
-            borders: cellBorder,
-            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "120pcs", size: 18 })] })]
-          }),
-          // Col 3: Test Photo
-          new TableCell({
-            borders: cellBorder,
-            children: imageChildren
-          }),
-          // Col 4: Result
-          new TableCell({
-            borders: cellBorder,
-            children: [
+            imageChildren.push(
               new Paragraph({
                 alignment: AlignmentType.CENTER,
                 children: [
                   new TextRun({
-                    text: sr.status === 'PASS' ? `${sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "117 pcs"}\nPass` : sr.status === 'FAIL' ? "Defective" : "Pending",
+                    text: image.label,
+                    size: 14,
                     bold: true,
-                    color: sr.status === 'PASS' ? "15803D" : sr.status === 'FAIL' ? "B91C1C" : "B45309",
-                    size: 18
+                    color: "334155"
                   })
                 ]
               })
-            ]
-          }),
-          // Col 5: Comments
-          new TableCell({
-            borders: cellBorder,
-            children: buildStepDetailParagraphs(sr)
-          }),
-        ]
-      })
-    );
-  });
+            );
+            imageChildren.push(
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new ImageRun({
+                    data: image.data,
+                    transformation: {
+                      width: finalWidth,
+                      height: finalHeight,
+                    },
+                    type: image.type
+                  }),
+                ],
+              })
+            );
+          } catch {
+            imageChildren.push(
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ text: `[Không thể chèn ảnh: ${image.label}]`, size: 16, color: "94A3B8" })]
+              })
+            );
+          }
+        });
+      } else {
+        imageChildren.push(
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: "Chưa thu thập ảnh", size: 16, color: "94A3B8", italics: true })]
+          })
+        );
+      }
 
-  const stepsTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: stepRows
-  });
+      stepRows.push(
+        new TableRow({
+          children: [
+            // Col 1: Test performed
+            new TableCell({
+              borders: cellBorder,
+              children: [
+                new Paragraph({ children: [new TextRun({ text: `${idx + 1}. `, bold: true, size: 18 }), new TextRun({ text: stepTitle, bold: true, size: 18 })] }),
+                new Paragraph({ children: [new TextRun({ text: `Mã: ${sr.stepId}`, size: 14, color: "64748B" })] }),
+              ]
+            }),
+            // Col 2: Sample size
+            new TableCell({
+              borders: cellBorder,
+              children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "120pcs", size: 18 })] })]
+            }),
+            // Col 3: Test Photo
+            new TableCell({
+              borders: cellBorder,
+              children: imageChildren
+            }),
+            // Col 4: Result
+            new TableCell({
+              borders: cellBorder,
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [
+                    new TextRun({
+                      text: sr.status === 'PASS' ? `${sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "117 pcs"}\nPass` : sr.status === 'FAIL' ? "Defective" : "Pending",
+                      bold: true,
+                      color: sr.status === 'PASS' ? "15803D" : sr.status === 'FAIL' ? "B91C1C" : "B45309",
+                      size: 18
+                    })
+                  ]
+                })
+              ]
+            }),
+            // Col 5: Comments
+            new TableCell({
+              borders: cellBorder,
+              children: buildStepDetailParagraphs(sr)
+            }),
+          ]
+        })
+      );
+    });
 
-  // Create document with official report header & sections
-  const doc = new Document({
-    sections: [
-      {
-        properties: {
-          page: {
-            margin: {
-              top: 720,
-              bottom: 720,
-              left: 720,
-              right: 720,
+    const stepsTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: stepRows
+    });
+
+    // Create document with official report header & sections
+    const doc = new Document({
+      sections: [
+        {
+          properties: {
+            page: {
+              margin: {
+                top: 720,
+                bottom: 720,
+                left: 720,
+                right: 720,
+              },
             },
           },
-        },
-        children: [
-          ...(veroLogo?.type === 'png' ? [
+          children: [
+            ...(veroLogo?.type === 'png' ? [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [
+                  new ImageRun({
+                    data: veroLogo.data,
+                    type: 'png',
+                    transformation: { width: 52, height: 52 },
+                  }),
+                ],
+              }),
+            ] : []),
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [new TextRun({ text: 'VERO QC', bold: true, size: 24, color: '075B63' })],
+            }),
+            // Top Report Header Line
+            new Paragraph({
+              children: [
+                new TextRun({ text: `Report No.: ${exportJob.id}`, bold: true, size: 18 }),
+                new TextRun({ text: `                                                                        Report Date: ${dateStr.split(' ')[0] || dateStr}`, bold: true, size: 18 }),
+              ]
+            }),
+            new Paragraph({ text: "_________________________________________________________________________________" }),
+            new Paragraph({ text: "" }),
+
+            // Document Main Title
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [
+                new TextRun({
+                  text: "Inspection Report",
+                  bold: true,
+                  size: 32,
+                  color: "000000"
+                })
+              ]
+            }),
+            new Paragraph({ text: "" }),
+
+            // Header Info Table (Image 1)
+            headerInfoTable,
+            new Paragraph({ text: "" }),
+
+            // FQC Summary Table (Image 1)
+            new Paragraph({ children: [new TextRun({ text: "FQC", bold: true, size: 20 })] }),
+            fqcTable,
+            new Paragraph({ text: "" }),
+
+            // Result Box (Image 1)
+            resultBoxTable,
+            new Paragraph({ text: "" }),
+
+            // Section A-1: AQL and Defects Finding Table (Image 2)
+            new Paragraph({ children: [new TextRun({ text: "FQC on device:", bold: true, size: 22 })] }),
+            new Paragraph({ children: [new TextRun({ text: "A-1) AQL and Defects Finding", bold: true, size: 20 })] }),
+            aqlDefectsTable,
+            new Paragraph({ text: "" }),
+
+            // Section B-3 & B-4: Measurement Tables (Images 3 & 4)
+            new Paragraph({ children: [new TextRun({ text: "B-3) Packaging information - Transport carton measurement", bold: true, size: 20 })] }),
+            packagingTable,
+            new Paragraph({ text: "" }),
+
+            new Paragraph({ children: [new TextRun({ text: "B-4) Device measurement", bold: true, size: 20 })] }),
+            deviceMeasurementTable,
+            new Paragraph({ text: "" }),
+
+            // Section C: ON-SITE CHECKING (Image 5)
+            new Paragraph({ children: [new TextRun({ text: "C.  ON-SITE CHECKING", bold: true, size: 22 })] }),
+            stepsTable,
+            new Paragraph({ text: "" }),
+
+            // Signatures Section
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: "4. XÁC NHẬN CÁC BÊN LIÊN QUAN",
+                  bold: true,
+                  size: 22,
+                  color: "0F172A"
+                })
+              ]
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                new TableRow({
+                  children: [
+                    new TableCell({
+                      borders: cellBorder,
+                      width: { size: 33, type: WidthType.PERCENTAGE },
+                      children: [
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "CÔNG NHÂN KIỂM TRA", bold: true, size: 20 })] }),
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "(Ký và ghi rõ họ tên)", italics: true, size: 16, color: "64748B" })] }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.workerName, bold: true, size: 20 })] }),
+                      ]
+                    }),
+                    new TableCell({
+                      borders: cellBorder,
+                      width: { size: 33, type: WidthType.PERCENTAGE },
+                      children: [
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "TỔ TRƯỜNG CHUYỀN SẢN XUẤT", bold: true, size: 20 })] }),
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "(Ký và ghi rõ họ tên)", italics: true, size: 16, color: "64748B" })] }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "...................................", bold: true, size: 20 })] }),
+                      ]
+                    }),
+                    new TableCell({
+                      borders: cellBorder,
+                      width: { size: 34, type: WidthType.PERCENTAGE },
+                      children: [
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "TRƯỜNG PHÒNG QC", bold: true, size: 20 })] }),
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "(Đã xác nhận trên hệ thống)", italics: true, size: 16, color: "64748B" })] }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ text: "" }),
+                        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Vero QC Admin (Đã xác nhận)", bold: true, size: 20, color: "15803D" })] }),
+                      ]
+                    }),
+                  ]
+                })
+              ]
+            }),
+
+            new Paragraph({ text: "" }),
             new Paragraph({
               alignment: AlignmentType.CENTER,
               children: [
-                new ImageRun({
-                  data: veroLogo.data,
-                  type: 'png',
-                  transformation: { width: 52, height: 52 },
-                }),
-              ],
-            }),
-          ] : []),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: 'VERO QC', bold: true, size: 24, color: '075B63' })],
-          }),
-          // Top Report Header Line
-          new Paragraph({
-            children: [
-              new TextRun({ text: `Report No.: ${exportJob.id}`, bold: true, size: 18 }),
-              new TextRun({ text: `                                                                        Report Date: ${dateStr.split(' ')[0] || dateStr}`, bold: true, size: 18 }),
-            ]
-          }),
-          new Paragraph({ text: "_________________________________________________________________________________" }),
-          new Paragraph({ text: "" }),
+                new TextRun({
+                  text: `Báo cáo được xuất tự động từ Vero QC | Thời điểm: ${new Date().toLocaleString('vi-VN')}`,
+                  size: 16,
+                  color: "94A3B8"
+                })
+              ]
+            })
+          ]
+        }
+      ]
+    });
 
-          // Document Main Title
-          new Paragraph({
-            heading: HeadingLevel.HEADING_1,
-            children: [
-              new TextRun({
-                text: "Inspection Report",
-                bold: true,
-                size: 32,
-                color: "000000"
-              })
-            ]
-          }),
-          new Paragraph({ text: "" }),
-
-          // Header Info Table (Image 1)
-          headerInfoTable,
-          new Paragraph({ text: "" }),
-
-          // FQC Summary Table (Image 1)
-          new Paragraph({ children: [new TextRun({ text: "FQC", bold: true, size: 20 })] }),
-          fqcTable,
-          new Paragraph({ text: "" }),
-
-          // Result Box (Image 1)
-          resultBoxTable,
-          new Paragraph({ text: "" }),
-
-          // Section A-1: AQL and Defects Finding Table (Image 2)
-          new Paragraph({ children: [new TextRun({ text: "FQC on device:", bold: true, size: 22 })] }),
-          new Paragraph({ children: [new TextRun({ text: "A-1) AQL and Defects Finding", bold: true, size: 20 })] }),
-          aqlDefectsTable,
-          new Paragraph({ text: "" }),
-
-          // Section B-3 & B-4: Measurement Tables (Images 3 & 4)
-          new Paragraph({ children: [new TextRun({ text: "B-3) Packaging information - Transport carton measurement", bold: true, size: 20 })] }),
-          packagingTable,
-          new Paragraph({ text: "" }),
-
-          new Paragraph({ children: [new TextRun({ text: "B-4) Device measurement", bold: true, size: 20 })] }),
-          deviceMeasurementTable,
-          new Paragraph({ text: "" }),
-
-          // Section C: ON-SITE CHECKING (Image 5)
-          new Paragraph({ children: [new TextRun({ text: "C.  ON-SITE CHECKING", bold: true, size: 22 })] }),
-          stepsTable,
-          new Paragraph({ text: "" }),
-
-          // Signatures Section
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: "4. XÁC NHẬN CÁC BÊN LIÊN QUAN",
-                bold: true,
-                size: 22,
-                color: "0F172A"
-              })
-            ]
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              new TableRow({
-                children: [
-                  new TableCell({
-                    borders: cellBorder,
-                    width: { size: 33, type: WidthType.PERCENTAGE },
-                    children: [
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "CÔNG NHÂN KIỂM TRA", bold: true, size: 20 })] }),
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "(Ký và ghi rõ họ tên)", italics: true, size: 16, color: "64748B" })] }),
-                      new Paragraph({ text: "" }),
-                      new Paragraph({ text: "" }),
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: exportJob.workerName, bold: true, size: 20 })] }),
-                    ]
-                  }),
-                  new TableCell({
-                    borders: cellBorder,
-                    width: { size: 33, type: WidthType.PERCENTAGE },
-                    children: [
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "TỔ TRƯỜNG CHUYỀN SẢN XUẤT", bold: true, size: 20 })] }),
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "(Ký và ghi rõ họ tên)", italics: true, size: 16, color: "64748B" })] }),
-                      new Paragraph({ text: "" }),
-                      new Paragraph({ text: "" }),
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "...................................", bold: true, size: 20 })] }),
-                    ]
-                  }),
-                  new TableCell({
-                    borders: cellBorder,
-                    width: { size: 34, type: WidthType.PERCENTAGE },
-                    children: [
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "TRƯỜNG PHÒNG QC", bold: true, size: 20 })] }),
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "(Đã xác nhận trên hệ thống)", italics: true, size: 16, color: "64748B" })] }),
-                      new Paragraph({ text: "" }),
-                      new Paragraph({ text: "" }),
-                      new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "Vero QC Admin (Đã xác nhận)", bold: true, size: 20, color: "15803D" })] }),
-                    ]
-                  }),
-                ]
-              })
-            ]
-          }),
-
-          new Paragraph({ text: "" }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [
-              new TextRun({
-                text: `Báo cáo được xuất tự động từ Vero QC | Thời điểm: ${new Date().toLocaleString('vi-VN')}`,
-                size: 16,
-                color: "94A3B8"
-              })
-            ]
-          })
-        ]
-      }
-    ]
-  });
-
-  // Pack native OpenXML binary stream and download as .docx
+    // Pack native OpenXML binary stream and download as .docx
     overlay.updateMessage('Đang đóng gói file .docx và hoàn tất tải xuống...');
     const blob = await Packer.toBlob(doc);
     const sanitizedJobId = exportJob.id.replace(/[^a-zA-Z0-9-]/g, '_');
