@@ -294,6 +294,118 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
     handleLoadStandard6Steps();
   };
 
+  const handleLoadX800ReportTemplate = () => {
+    setTitle('Mẫu Kiểm Định X800 Bell Nexa');
+    setProductCode('X800_BELL');
+    setDocxTemplateName('X800_inspection report_100-94-260730_ Bell_840.docx');
+    setVersion('1.0.0');
+    setClientName('Nexa');
+    setSupplierName('EAGLEON (VN) COMPANY LIMITED');
+    setSupplierLocation('Factory No. 2, Lot CN-A5 Chau Phong Industrial Cluster');
+    setSupplierContact('Wan Yao');
+    setServiceRequired('FRI(Final Random Inspection)');
+    setAqlStandard('ISO 2859-1 (GIII, Major 0.4 / Minor 1.0)');
+    setInspectionLevel('GIII');
+    setOrderQty('840');
+    setCartonQty('84');
+    setCartonSpec('380.00X240.00X130.00');
+    setDeviceSpec('171.53×80.09×12.60');
+    setSystemVersion('14');
+    setHardwareVersion('V1.0');
+    setBuildNumber('X80.0-03-14.0-11.35.00');
+
+    setDefectsFindingData([
+      { id: 'DEF_1', description: 'COS-007-Deformation (IMEI: 016650000461701)', defectType: 'Minor', count: 1 },
+      { id: 'DEF_2', description: 'MEC-010-Assembly Not Properly Seated (IMEI: 016650000475024)', defectType: 'Minor', count: 1 },
+      { id: 'DEF_3', description: 'C0S-001-Scratch (IMEI: 016650000471668)', defectType: 'Minor', count: 1 }
+    ]);
+
+    setPackagingInfoData({
+      cartonMeasuredSize: '380.00X240.00X130.00',
+      cartonNw: '5011g',
+      cartonGw: '5461.1g',
+      cartonResult: 'For refer',
+      deviceMeasuredSize: '171.53×80.09×12.60',
+      deviceNw: '279.8g',
+      deviceGw: '501.11g',
+      deviceResult: 'For refer',
+      barcodeData: 'SNM000015 / 04.F010.372100-B00',
+      barcodeResult: 'PASS'
+    });
+
+    const stepTitles = [
+      'Visual Inspection (Sample: 128 Pcs)',
+      'OOBE Startup',
+      'Off Animation',
+      'Debugging Mode',
+      'SIM Card, SD Card Installation',
+      'Wired Charging & Vibration',
+      'Wireless Charger',
+      'Dock charger',
+      'Volume key',
+      'PPT Key',
+      'SoS Key',
+      'Headset and SecureAudio Port',
+      'Flashlight & Light Sensor',
+      'Gyroscope Verification with Camera',
+      'Back Cameras Photos Capture',
+      'Back Camera Video Capture & Verification',
+      'Multi-touch & Back Camera Photos',
+      'Front Camera Video & Photo Capture',
+      'Front Camera Photo & Video Verification',
+      'Live Call, Video Call, SMS & MMS',
+      'Wi-Fi',
+      'Voice Recognition',
+      'Bluetooth',
+      'SD Card',
+      'PIN Setup',
+      'Fingerprint Setup',
+      'Face Unlock Setup',
+      'Google account check',
+      'Call Emergency',
+      'IMEI Match, SW & HW version check',
+      'Check system information',
+      'Mic/Sub-Mic',
+      'LCD',
+      'Buttons',
+      'Vibrator',
+      'Gravity sensor',
+      'Gyroscope',
+      'Magnetic sensor',
+      'Pressure sensor',
+      'Proximity sensor',
+      'SAR sensor',
+      'GPS',
+      'OTG',
+      'SD',
+      'SIM',
+      'NFC test',
+      'SIM Card, SD Card Remove'
+    ];
+
+    const x800Steps: InspectionStep[] = stepTitles.map((titleText, idx) => ({
+      stepId: `STEP_${idx + 1}`,
+      title: `${idx + 1}. ${titleText}`,
+      sampleSize: idx === 0 ? '128 Pcs' : (idx === 3 || idx === 21) ? '1 Pcs' : '125 Pcs',
+      requiredPhotoCount: (idx === 3 || idx === 21) ? 1 : 2,
+      photoSlots: (idx === 3 || idx === 21) ? ['Ảnh kiểm tra'] : ['Ảnh 1', 'Ảnh 2'],
+      inputType: 'PHOTO_AND_TEXT',
+      enableAiDetection: true,
+      aiDetectType: (idx === 0 || idx === 28) ? 'IMEI_SERIAL' : (idx === 31) ? 'COLOR_SCREEN' : 'GENERAL',
+      isPhotoRequired: true,
+      passCriteria: idx === 0 ? 'Pass 125 Pcs, Defective 3 Pcs' : 'Pass (Satisfied)',
+      mapping: {
+        imageTag: `{{photo_step_${idx + 1}}}`,
+        noteTag: `{{note_step_${idx + 1}}}`,
+        statusTag: `{{status_step_${idx + 1}}}`,
+        imageWidthMm: 60,
+        imageHeightMm: 45
+      }
+    }));
+
+    setSteps(x800Steps);
+  };
+
   const handleSaveMapping = (stepIndex: number, mapping: DocxMapping) => {
     setSteps(prev => {
       const updated = [...prev];
@@ -485,6 +597,16 @@ export const TemplateFormModal: React.FC<TemplateFormModalProps> = ({
                     </p>
                   </div>
                   <div data-tour="template-form-presets" className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                    <button
+                      type="button"
+                      onClick={handleLoadX800ReportTemplate}
+                      className="qc-builder-btn-primary px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all bg-emerald-700 hover:bg-emerald-600 text-white"
+                      title="Nạp đầy đủ toàn bộ quy trình kiểm định 47 bước & thông tin báo cáo X800 Bell Nexa từ file DOCX"
+                    >
+                      <Sparkles className="w-4 h-4 text-emerald-200" />
+                      <span>✨ Nạp Mẫu X800 Bell Nexa (Full 47 Bước)</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={handleLoadX530ReportTemplate}

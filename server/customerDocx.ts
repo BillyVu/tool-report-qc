@@ -227,7 +227,8 @@ function reportDate(value: string | Date) {
 }
 
 export function isCustomerDocxTemplate(templateName?: string | null) {
-  return basename(templateName || '') === X530_TEMPLATE_NAME;
+  const name = basename(templateName || '');
+  return name === X530_TEMPLATE_NAME || name.includes('X800_inspection') || name.includes('X800');
 }
 
 function getPhotosForStep(photos: CustomerReportPhoto[], stepId: string, stepIndex: number): CustomerReportPhoto[] {
@@ -385,6 +386,12 @@ async function populateDefectsTable(
       text.includes('016724000199288') ||
       text.includes('Wrinkled IMEI') ||
       text.includes('016724000176104') ||
+      text.includes('COS-007-Deformation') ||
+      text.includes('016650000461701') ||
+      text.includes('MEC-010-Assembly') ||
+      text.includes('016650000475024') ||
+      text.includes('C0S-001-Scratch') ||
+      text.includes('016650000471668') ||
       text.includes('{{defect_desc}}')
     ) {
       const isStepRow = text.includes('Appearance check') || text.includes('pcs') || text.length > 200;
