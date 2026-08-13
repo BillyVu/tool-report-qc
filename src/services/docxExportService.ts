@@ -11,7 +11,8 @@ import {
   AlignmentType,
   HeadingLevel,
   ImageRun,
-  ShadingType
+  ShadingType,
+  VerticalAlign
 } from 'docx';
 import saveAs from 'file-saver';
 import { InspectionJob, ChecklistTemplate, StepResult, InspectionStep } from '../types/qc';
@@ -35,6 +36,15 @@ const SUPPORTED_IMAGE_TYPES = new Set<ExportImageType>(['png', 'jpg', 'gif', 'bm
 const SUPPORTED_SOURCE_IMAGE_TYPES = new Set<SourceImageType>(['png', 'jpg', 'gif', 'bmp', 'webp']);
 const X530_CUSTOMER_TEMPLATE_NAME = 'X530 Knobs_Inspection Report 100-70-260722-117pcs_ATT.docx';
 const IMAGE_FETCH_CONCURRENCY = 6;
+const COMPACT_PARAGRAPH_SPACING = { before: 0, after: 0 };
+const AUTO_FIT_CELL_MARGINS = { top: 80, bottom: 80, left: 80, right: 80 };
+
+function compactParagraph(options: Exclude<ConstructorParameters<typeof Paragraph>[0], string>): Paragraph {
+  return new Paragraph({
+    ...options,
+    spacing: options?.spacing || COMPACT_PARAGRAPH_SPACING,
+  });
+}
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -189,7 +199,7 @@ function getWorkerStatusDisplay(stepResult: StepResult) {
 
 function buildStepDetailParagraphs(stepResult: StepResult): Paragraph[] {
   const details: Paragraph[] = [
-    new Paragraph({
+    compactParagraph({
       children: [
         new TextRun({ text: stepResult.note || 'Không có ghi chú', size: 20, color: "1E293B" })
       ]
@@ -197,7 +207,7 @@ function buildStepDetailParagraphs(stepResult: StepResult): Paragraph[] {
   ];
 
   if (stepResult.textValue) {
-    details.push(new Paragraph({
+    details.push(compactParagraph({
       children: [
         new TextRun({ text: 'Dữ liệu nhập: ', bold: true, size: 18, color: "334155" }),
         new TextRun({ text: stepResult.textValue, size: 18, color: "1E293B" }),
@@ -206,7 +216,7 @@ function buildStepDetailParagraphs(stepResult: StepResult): Paragraph[] {
   }
 
   if (stepResult.aiDetectedValue) {
-    details.push(new Paragraph({
+    details.push(compactParagraph({
       children: [
         new TextRun({ text: 'Vero: ', bold: true, size: 18, color: "6D28D9" }),
         new TextRun({ text: stepResult.aiDetectedValue, size: 18, color: "1E293B" }),
@@ -215,7 +225,7 @@ function buildStepDetailParagraphs(stepResult: StepResult): Paragraph[] {
   }
 
   if (stepResult.aiResultJson && typeof stepResult.aiResultJson === 'object') {
-    details.push(new Paragraph({
+    details.push(compactParagraph({
       children: [
         new TextRun({ text: 'Vero JSON: ', bold: true, size: 18, color: "6D28D9" }),
         new TextRun({ text: JSON.stringify(stepResult.aiResultJson), size: 16, color: "475569" }),
@@ -224,7 +234,7 @@ function buildStepDetailParagraphs(stepResult: StepResult): Paragraph[] {
   }
 
   if (stepResult.adminReviewNote) {
-    details.push(new Paragraph({
+    details.push(compactParagraph({
       children: [
         new TextRun({ text: 'Ghi chú duyệt Admin: ', bold: true, size: 18, color: "1D4ED8" }),
         new TextRun({ text: stepResult.adminReviewNote, size: 18, color: "1E293B" }),
@@ -233,7 +243,7 @@ function buildStepDetailParagraphs(stepResult: StepResult): Paragraph[] {
   }
 
   if (stepResult.editedByAdmin) {
-    details.push(new Paragraph({
+    details.push(compactParagraph({
       children: [
         new TextRun({ text: '[QC Admin đã hiệu chỉnh ghi chú]', size: 16, color: "2563EB", italics: true })
       ]
@@ -977,7 +987,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
             }
 
             imageChildren.push(
-              new Paragraph({
+              compactParagraph({
                 alignment: AlignmentType.CENTER,
                 children: [
                   new TextRun({
@@ -990,7 +1000,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
               })
             );
             imageChildren.push(
-              new Paragraph({
+              compactParagraph({
                 alignment: AlignmentType.CENTER,
                 children: [
                   new ImageRun({
@@ -1006,7 +1016,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
             );
           } catch {
             imageChildren.push(
-              new Paragraph({
+              compactParagraph({
                 alignment: AlignmentType.CENTER,
                 children: [new TextRun({ text: `[Không thể chèn ảnh: ${image.label}]`, size: 16, color: "94A3B8" })]
               })
@@ -1015,7 +1025,7 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
         });
       } else {
         imageChildren.push(
-          new Paragraph({
+          compactParagraph({
             alignment: AlignmentType.CENTER,
             children: [new TextRun({ text: "Chưa thu thập ảnh", size: 16, color: "94A3B8", italics: true })]
           })
@@ -1028,26 +1038,34 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
             // Col 1: Test performed
             new TableCell({
               borders: cellBorder,
+              verticalAlign: VerticalAlign.TOP,
+              margins: AUTO_FIT_CELL_MARGINS,
               children: [
-                new Paragraph({ children: [new TextRun({ text: `${idx + 1}. `, bold: true, size: 18 }), new TextRun({ text: stepTitle, bold: true, size: 18 })] }),
-                new Paragraph({ children: [new TextRun({ text: `Mã: ${sr.stepId}`, size: 14, color: "64748B" })] }),
+                compactParagraph({ children: [new TextRun({ text: `${idx + 1}. `, bold: true, size: 18 }), new TextRun({ text: stepTitle, bold: true, size: 18 })] }),
+                compactParagraph({ children: [new TextRun({ text: `Mã: ${sr.stepId}`, size: 14, color: "64748B" })] }),
               ]
             }),
             // Col 2: Sample size
             new TableCell({
               borders: cellBorder,
-              children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "120pcs", size: 18 })] })]
+              verticalAlign: VerticalAlign.TOP,
+              margins: AUTO_FIT_CELL_MARGINS,
+              children: [compactParagraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: sr.sampleSize || stepDef?.sampleSize || exportJob.templateSnapshot?.orderQty || "120pcs", size: 18 })] })]
             }),
             // Col 3: Test Photo
             new TableCell({
               borders: cellBorder,
+              verticalAlign: VerticalAlign.TOP,
+              margins: AUTO_FIT_CELL_MARGINS,
               children: imageChildren
             }),
             // Col 4: Result
             new TableCell({
               borders: cellBorder,
+              verticalAlign: VerticalAlign.TOP,
+              margins: AUTO_FIT_CELL_MARGINS,
               children: [
-                new Paragraph({
+                compactParagraph({
                   alignment: AlignmentType.CENTER,
                   children: [
                     new TextRun({
@@ -1063,6 +1081,8 @@ export async function generateDocxReport(job: InspectionJob, template?: Checklis
             // Col 5: Comments
             new TableCell({
               borders: cellBorder,
+              verticalAlign: VerticalAlign.TOP,
+              margins: AUTO_FIT_CELL_MARGINS,
               children: buildStepDetailParagraphs(sr)
             }),
           ]

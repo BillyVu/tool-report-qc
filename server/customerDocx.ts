@@ -443,6 +443,7 @@ async function populateDefectsTable(
     if (!templateRow) return;
 
     const emptyRow = templateRow.cloneNode(true);
+    prepareDynamicRow(documentDom, emptyRow);
     const cells = emptyRow.getElementsByTagNameNS(WORD_NS, 'tc');
     if (cells.length >= 5) {
       replaceCellText(cells.item(0), 'No defect');
@@ -466,6 +467,7 @@ async function populateDefectsTable(
       const isMinor = defect.defectType === 'Minor' || (!isCritical && !isMajor);
 
       const newRow = templateRow.cloneNode(true);
+      prepareDynamicRow(documentDom, newRow);
       const cells = newRow.getElementsByTagNameNS(WORD_NS, 'tc');
       if (cells.length >= 5) {
         replaceCellText(cells.item(0), defect.description || '');
@@ -690,7 +692,29 @@ function clearCellBody(cell: any): void {
   }
 }
 
-function prepareDynamicRow(documentDom: any, row: any): void {
+function ensureCellVerticalAlignTop(documentDom: any, cell: any): void {
+  let cellProperties = cell.getElementsByTagNameNS(WORD_NS, 'tcPr').item(0);
+  if (!cellProperties) {
+    cellProperties = documentDom.createElementNS(WORD_NS, 'w:tcPr');
+    cell.insertBefore(cellProperties, cell.firstChild);
+  }
+  let verticalAlignment = cellProperties.getElementsByTagNameNS(WORD_NS, 'vAlign').item(0);
+  if (!verticalAlignment) {
+    verticalAlignment = documentDom.createElementNS(WORD_NS, 'w:vAlign');
+    cellProperties.appendChild(verticalAlignment);
+  }
+  verticalAlignment.setAttributeNS(WORD_NS, 'w:val', 'top');
+}
+
+function removeNoWrapFromCell(cell: any): void {
+  const noWraps = cell.getElementsByTagNameNS(WORD_NS, 'noWrap');
+  for (let index = noWraps.length - 1; index >= 0; index -= 1) {
+    const noWrap = noWraps.item(index);
+    if (noWrap?.parentNode) noWrap.parentNode.removeChild(noWrap);
+  }
+}
+
+function prepareDynamicRow(documentDom: any, row: any, options: { keepTogether?: boolean } = {}): void {
   const heights = row.getElementsByTagNameNS(WORD_NS, 'trHeight');
   for (let index = heights.length - 1; index >= 0; index -= 1) {
     const height = heights.item(index);
@@ -698,12 +722,26 @@ function prepareDynamicRow(documentDom: any, row: any): void {
   }
 
   let rowProperties = row.getElementsByTagNameNS(WORD_NS, 'trPr').item(0);
-  if (!rowProperties) {
+  if (!rowProperties && options.keepTogether) {
     rowProperties = documentDom.createElementNS(WORD_NS, 'w:trPr');
     row.insertBefore(rowProperties, row.firstChild);
   }
-  if (!rowProperties.getElementsByTagNameNS(WORD_NS, 'cantSplit').length) {
+
+  const cantSplits = row.getElementsByTagNameNS(WORD_NS, 'cantSplit');
+  for (let index = cantSplits.length - 1; index >= 0; index -= 1) {
+    const cantSplit = cantSplits.item(index);
+    if (!options.keepTogether && cantSplit?.parentNode) cantSplit.parentNode.removeChild(cantSplit);
+  }
+  if (options.keepTogether && rowProperties && !rowProperties.getElementsByTagNameNS(WORD_NS, 'cantSplit').length) {
     rowProperties.appendChild(documentDom.createElementNS(WORD_NS, 'w:cantSplit'));
+  }
+
+  const cells = row.getElementsByTagNameNS(WORD_NS, 'tc');
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells.item(index);
+    if (!cell) continue;
+    removeNoWrapFromCell(cell);
+    ensureCellVerticalAlignTop(documentDom, cell);
   }
 }
 
@@ -789,9 +827,7 @@ async function populatePhotoGridCell(options: {
   for (let rowIndex = 0; rowIndex < step.photoRows.length; rowIndex += 1) {
     const photoRow = step.photoRows[rowIndex];
     const row = documentDom.createElementNS(WORD_NS, 'w:tr');
-    const rowProperties = documentDom.createElementNS(WORD_NS, 'w:trPr');
-    rowProperties.appendChild(documentDom.createElementNS(WORD_NS, 'w:cantSplit'));
-    row.appendChild(rowProperties);
+    prepareDynamicRow(documentDom, row, { keepTogether: true });
     const rowPhotos: Array<ReportPhoto | undefined> = columnCount === 2
       ? [photoRow.left, photoRow.right]
       : [photoRow.left];

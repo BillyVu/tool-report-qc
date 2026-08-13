@@ -227,9 +227,11 @@ test('dynamically populates defects, packaging, and step rows with unique images
     <!-- Steps Table -->
     <w:tbl>
       <w:tr>
-        <w:tc><w:p><w:r><w:t>{{step_idx}}</w:t></w:r></w:p></w:tc>
-        <w:tc><w:p><w:r><w:t>{{step_title}}</w:t></w:r></w:p></w:tc>
+        <w:trPr><w:trHeight w:val="900" w:hRule="exact"/><w:cantSplit/></w:trPr>
+        <w:tc><w:tcPr><w:noWrap/></w:tcPr><w:p><w:r><w:t>{{step_idx}}</w:t></w:r></w:p></w:tc>
+        <w:tc><w:tcPr><w:noWrap/></w:tcPr><w:p><w:r><w:t>{{step_title}}</w:t></w:r></w:p></w:tc>
         <w:tc>
+          <w:tcPr><w:noWrap/></w:tcPr>
           <w:p>
             <w:r><w:t>{{slot_label}}</w:t></w:r>
             <w:drawing>
@@ -327,6 +329,9 @@ test('dynamically populates defects, packaging, and step rows with unique images
     assert.match(documentXml, /Kiểm tra bề mặt/);
     assert.match(documentXml, /120 pcs Pass/);
     assert.match(documentXml, /Đạt yêu cầu/);
+    assert.doesNotMatch(documentXml, /w:trHeight/, 'dynamic rows do not retain exact template row heights');
+    assert.doesNotMatch(documentXml, /w:noWrap/, 'dynamic cells allow content wrapping');
+    assert.match(documentXml, /<w:vAlign w:val="top"\/>/, 'dynamic cells align content to the top');
 
     // Check relationship files contain the newly registered image relationship
     assert.match(relsXmlOutput, /Target="media\/defect_1_/);
